@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Page Downloader</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 640px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 32px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 24px;
+        }
+        .steps {
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        .steps h2 {
+            font-size: 1rem;
+            margin-bottom: 12px;
+        }
+        .steps ol {
+            padding-left: 20px;
+        }
+        .steps li {
+            margin-bottom: 6px;
+        }
+        .steps a {
+            color: #2563eb;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+        }
+        input[type="url"], input[type="file"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            margin-bottom: 16px;
+        }
+        input[type="url"]:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+        input[type="file"] {
+            padding: 8px;
+            cursor: pointer;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:hover { background: #1d4ed8; }
+        .error {
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+        }
+        .results {
+            font-size: 0.9rem;
+        }
+        .results h2 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+        }
+        .results .section {
+            margin-bottom: 12px;
+        }
+        .results .section-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .results ul {
+            padding-left: 20px;
+        }
+        .results li { margin-bottom: 2px; }
+        .ok { color: #15803d; }
+        .fail { color: #991b1b; }
+        .download-btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 24px;
+            background: #16a34a;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            width: auto;
+        }
+        .download-btn:hover { background: #15803d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Canvas Page Downloader</h1>
+        <p class="subtitle">Download files and content from a Canvas LMS page.</p>
+
+        {% if results %}
+        <div class="card results">
+            <h2>{{ results.page_title }}</h2>
+
+            {% if results.has_main_page %}
+            <div class="section">
+                <span class="section-title">Page text:</span> <span class="ok">saved</span>
+            </div>
+            {% endif %}
+
+            {% if results.files_ok %}
+            <div class="section">
+                <div class="section-title">Files downloaded ({{ results.files_ok|length }}):</div>
+                <ul>{% for f in results.files_ok %}<li class="ok">{{ f }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+
+            {% if results.files_fail %}
+            <div class="section">
+                <div class="section-title">Files failed ({{ results.files_fail|length }}):</div>
+                <ul>{% for f in results.files_fail %}<li class="fail">{{ f }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+
+            {% if results.pages_ok %}
+            <div class="section">
+                <div class="section-title">Canvas pages saved ({{ results.pages_ok|length }}):</div>
+                <ul>{% for p in results.pages_ok %}<li class="ok">{{ p }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+
+            {% if results.pages_fail %}
+            <div class="section">
+                <div class="section-title">Pages failed ({{ results.pages_fail|length }}):</div>
+                <ul>{% for p in results.pages_fail %}<li class="fail">{{ p }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+
+            {% if results.external_links %}
+            <div class="section">
+                <div class="section-title">External links ({{ results.external_links|length }}):</div>
+                <span>Saved to links.txt in the zip.</span>
+            </div>
+            {% endif %}
+
+            <a href="{{ url_for('download_zip', dir=tmpdir) }}" class="download-btn">Download ZIP</a>
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        <div class="card">
+            <div class="steps">
+                <h2>How to use</h2>
+                <ol>
+                    <li>Install the <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank">Get cookies.txt LOCALLY</a> browser extension</li>
+                    <li>Log into Canvas in your browser</li>
+                    <li>On the Canvas site, click the extension icon and export cookies</li>
+                    <li>Paste the Canvas page URL below</li>
+                    <li>Upload the cookies.txt file and click Download</li>
+                </ol>
+            </div>
+
+            <form method="post" enctype="multipart/form-data">
+                <label for="url">Canvas Page URL</label>
+                <input type="url" id="url" name="url" placeholder="https://canvas.example.edu/courses/12345/pages/page-name" value="{{ url or '' }}" required>
+
+                <label for="cookies">Cookies File</label>
+                <input type="file" id="cookies" name="cookies" accept=".txt" required>
+
+                <button type="submit">Download Page Content</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
