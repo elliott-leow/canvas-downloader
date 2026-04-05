@@ -5,15 +5,18 @@ import os
 import shutil
 import tempfile
 import zipfile
+from urllib.parse import urlparse
 
 from flask import Flask, render_template, request, send_file
 
 from canvas_downloader import (
+    SUPPORTED_BROWSERS,
     create_session,
     fetch_course_name,
     fetch_module_items,
     fetch_modules,
     load_cookies,
+    load_cookies_from_browser,
     parse_course_url,
     process_module_items,
     sanitize_filename,
@@ -27,47 +30,66 @@ app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # 2MB max upload
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'GET':
-        return render_template('index.html')
+        return render_template('index.html', browsers=SUPPORTED_BROWSERS)
 
     # Validate inputs
     url = request.form.get('url', '').strip()
+    auth_method = request.form.get('auth_method', 'browser')
     cookie_file = request.files.get('cookies')
+    browser = request.form.get('browser', '')
 
     if not url:
-        return render_template('index.html', error="Please enter a Canvas course URL.")
-    if not cookie_file or cookie_file.filename == '':
-        return render_template('index.html', error="Please upload a cookies.txt file.", url=url)
+        return render_template('index.html', error="Please enter a Canvas course URL.", browsers=SUPPORTED_BROWSERS)
     if not validate_canvas_url(url):
         return render_template(
             'index.html',
             error="URL doesn't look like a Canvas course URL. Expected format: https://canvas.example.edu/courses/12345",
             url=url,
+            browsers=SUPPORTED_BROWSERS,
         )
+
+    if auth_method == 'file' and (not cookie_file or cookie_file.filename == ''):
+        return render_template('index.html', error="Please upload a cookies.txt file.", url=url, browsers=SUPPORTED_BROWSERS)
+    if auth_method == 'browser' and browser not in SUPPORTED_BROWSERS:
+        return render_template('index.html', error="Please select a browser.", url=url, browsers=SUPPORTED_BROWSERS)
 
     tmpdir = tempfile.mkdtemp(prefix='canvas_dl_')
     try:
-        return _process_download(url, cookie_file, tmpdir)
+        return _process_download(url, auth_method, browser, cookie_file, tmpdir)
     except Exception:
         shutil.rmtree(tmpdir, ignore_errors=True)
         raise
 
 
-def _process_download(url, cookie_file, tmpdir):
-    cookie_path = os.path.join(tmpdir, 'cookies.txt')
+def _process_download(url, auth_method, browser, cookie_file, tmpdir):
     output_dir = os.path.join(tmpdir, 'output')
     os.makedirs(output_dir)
 
-    cookie_file.save(cookie_path)
-
-    try:
-        cookie_jar = load_cookies(cookie_path)
-    except SystemExit:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        return render_template(
-            'index.html',
-            error="Failed to load cookies. Make sure you uploaded a valid Netscape-format cookies.txt file.",
-            url=url,
-        )
+    if auth_method == 'browser':
+        domain = urlparse(url).netloc
+        try:
+            cookie_jar = load_cookies_from_browser(browser, domain)
+        except SystemExit:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return render_template(
+                'index.html',
+                error=f"Failed to load cookies from {browser}. Make sure you're logged into Canvas and try closing the browser first.",
+                url=url,
+                browsers=SUPPORTED_BROWSERS,
+            )
+    else:
+        cookie_path = os.path.join(tmpdir, 'cookies.txt')
+        cookie_file.save(cookie_path)
+        try:
+            cookie_jar = load_cookies(cookie_path)
+        except SystemExit:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return render_template(
+                'index.html',
+                error="Failed to load cookies. Make sure you uploaded a valid Netscape-format cookies.txt file.",
+                url=url,
+                browsers=SUPPORTED_BROWSERS,
+            )
 
     session = create_session(cookie_jar)
     base_url, course_id = parse_course_url(url)
@@ -79,8 +101,9 @@ def _process_download(url, cookie_file, tmpdir):
         shutil.rmtree(tmpdir, ignore_errors=True)
         return render_template(
             'index.html',
-            error="Authentication failed. Your cookies may have expired — export fresh ones and try again.",
+            error="Authentication failed. Your cookies may have expired — log into Canvas again and retry.",
             url=url,
+            browsers=SUPPORTED_BROWSERS,
         )
 
     # Fetch modules
@@ -92,11 +115,12 @@ def _process_download(url, cookie_file, tmpdir):
             'index.html',
             error="Failed to fetch modules. Check that you have access to this course.",
             url=url,
+            browsers=SUPPORTED_BROWSERS,
         )
 
     if not modules:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return render_template('index.html', error="No modules found in this course.", url=url)
+        return render_template('index.html', error="No modules found in this course.", url=url, browsers=SUPPORTED_BROWSERS)
 
     # Process all modules
     total_stats = {'files_ok': 0, 'files_fail': 0, 'pages_ok': 0, 'pages_fail': 0}
@@ -137,7 +161,7 @@ def _process_download(url, cookie_file, tmpdir):
 
     if not has_content:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return render_template('index.html', error="No downloadable content found in this course.", url=url)
+        return render_template('index.html', error="No downloadable content found in this course.", url=url, browsers=SUPPORTED_BROWSERS)
 
     # Zip everything
     zip_path = os.path.join(tmpdir, f"{course_name}.zip")
@@ -157,7 +181,7 @@ def _process_download(url, cookie_file, tmpdir):
         'has_main_page': True,
     }
 
-    return render_template('index.html', results=results, zip_ready=True, url=url, tmpdir=tmpdir)
+    return render_template('index.html', results=results, zip_ready=True, url=url, tmpdir=tmpdir, browsers=SUPPORTED_BROWSERS)
 
 
 @app.route('/download')

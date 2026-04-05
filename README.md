@@ -26,31 +26,49 @@ source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
-### Getting Your Cookies
+## Authentication
 
-Canvas requires authentication. You need to export your browser cookies:
+Canvas requires authentication. There are two options:
 
-1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome) or a similar extension for your browser
+### Option A: Auto-fetch from browser (easiest)
+
+Just log into Canvas in your browser, then use the `--browser` flag. The tool reads cookies directly from your browser -- no extensions or extra steps needed.
+
+```bash
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
+```
+
+**Supported browsers:** chrome, firefox, opera, edge, chromium, brave, vivaldi, safari
+
+> You may need to close the browser first -- some browsers lock their cookie database while running.
+
+### Option B: Export a cookies file
+
+If auto-fetch doesn't work for your setup, you can export cookies manually:
+
+1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome) or a similar extension
 2. Log into your Canvas site
-3. On the Canvas page, click the extension icon and export/download the cookies
-4. Save the file as `cookies.txt`
+3. Click the extension icon on the Canvas page and export cookies
+4. Save as `cookies.txt`
+
+```bash
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt
+```
 
 ## Usage
 
 ### CLI
 
 ```bash
+# Auto-fetch cookies from browser
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
+
 # Using a cookies file
 python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt
 
-# Using cookies directly from your browser (no export needed)
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
-
 # Custom output directory
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt --output ./my-course
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser chrome --output ./my-course
 ```
-
-**Supported browsers** for `--browser`: chrome, firefox, opera, edge, chromium, brave, vivaldi, safari
 
 ### Web UI
 
@@ -58,7 +76,7 @@ python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --c
 python app.py
 ```
 
-Open http://localhost:5000 in your browser. Paste the course URL and upload your `cookies.txt` file. The web UI packages everything into a ZIP download.
+Open http://localhost:5000 in your browser. Paste the course URL, pick your browser (or upload a cookies file), and hit Download. Everything gets packaged into a ZIP.
 
 ## Output Structure
 

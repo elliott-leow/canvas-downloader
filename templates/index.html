@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canvas Page Downloader</title>
+    <title>Canvas Course Downloader</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -32,27 +32,7 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             margin-bottom: 24px;
         }
-        .steps {
-            margin-bottom: 24px;
-            padding: 16px;
-            background: #f9fafb;
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
-        .steps h2 {
-            font-size: 1rem;
-            margin-bottom: 12px;
-        }
-        .steps ol {
-            padding-left: 20px;
-        }
-        .steps li {
-            margin-bottom: 6px;
-        }
-        .steps a {
-            color: #2563eb;
-        }
-        label {
+label {
             display: block;
             font-weight: 600;
             margin-bottom: 6px;
@@ -128,12 +108,57 @@
             width: auto;
         }
         .download-btn:hover { background: #15803d; }
+        .auth-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 16px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #d1d5db;
+        }
+        .auth-tabs .tab {
+            flex: 1;
+            padding: 8px 12px;
+            background: #f9fafb;
+            color: #374151;
+            border: none;
+            border-radius: 0;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: auto;
+        }
+        .auth-tabs .tab.active {
+            background: #2563eb;
+            color: #fff;
+        }
+        .auth-tabs .tab:hover:not(.active) { background: #e5e7eb; }
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+            background: #fff;
+        }
+        select:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+        .hint {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-bottom: 16px;
+        }
+        .hint a { color: #2563eb; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Canvas Page Downloader</h1>
-        <p class="subtitle">Download files and content from a Canvas LMS page.</p>
+        <h1>Canvas Course Downloader</h1>
+        <p class="subtitle">Back up all files and content from a Canvas LMS course.</p>
 
         {% if results %}
         <div class="card results">
@@ -189,27 +214,47 @@
         {% endif %}
 
         <div class="card">
-            <div class="steps">
-                <h2>How to use</h2>
-                <ol>
-                    <li>Install the <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank">Get cookies.txt LOCALLY</a> browser extension</li>
-                    <li>Log into Canvas in your browser</li>
-                    <li>On the Canvas site, click the extension icon and export cookies</li>
-                    <li>Paste the Canvas page URL below</li>
-                    <li>Upload the cookies.txt file and click Download</li>
-                </ol>
-            </div>
-
             <form method="post" enctype="multipart/form-data">
-                <label for="url">Canvas Page URL</label>
-                <input type="url" id="url" name="url" placeholder="https://canvas.example.edu/courses/12345/pages/page-name" value="{{ url or '' }}" required>
+                <label for="url">Canvas Course URL</label>
+                <input type="url" id="url" name="url" placeholder="https://canvas.example.edu/courses/12345" value="{{ url or '' }}" required>
 
-                <label for="cookies">Cookies File</label>
-                <input type="file" id="cookies" name="cookies" accept=".txt" required>
+                <label>Authentication</label>
+                <div class="auth-tabs">
+                    <button type="button" class="tab active" onclick="switchAuth('browser')">Auto from browser</button>
+                    <button type="button" class="tab" onclick="switchAuth('file')">Upload cookies file</button>
+                </div>
+                <input type="hidden" name="auth_method" id="auth_method" value="browser">
 
-                <button type="submit">Download Page Content</button>
+                <div id="auth-browser" class="auth-section">
+                    <label for="browser">Browser</label>
+                    <select id="browser" name="browser">
+                        {% for b in browsers or [] %}
+                        <option value="{{ b }}">{{ b|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="hint">Log into Canvas in your browser first. You may need to close it before downloading.</p>
+                </div>
+
+                <div id="auth-file" class="auth-section" style="display:none;">
+                    <label for="cookies">Cookies File</label>
+                    <input type="file" id="cookies" name="cookies" accept=".txt">
+                    <p class="hint">Export cookies with <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank">Get cookies.txt LOCALLY</a> or a similar extension.</p>
+                </div>
+
+                <button type="submit">Download Course</button>
             </form>
         </div>
+
+        <script>
+        function switchAuth(method) {
+            document.getElementById('auth_method').value = method;
+            document.getElementById('auth-browser').style.display = method === 'browser' ? '' : 'none';
+            document.getElementById('auth-file').style.display = method === 'file' ? '' : 'none';
+            document.querySelectorAll('.auth-tabs .tab').forEach(function(t) {
+                t.classList.toggle('active', t.textContent.toLowerCase().includes(method === 'browser' ? 'auto' : 'upload'));
+            });
+        }
+        </script>
     </div>
 </body>
 </html>
