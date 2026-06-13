@@ -266,6 +266,34 @@ def download_file_by_url(session: requests.Session, url: str, output_dir: str) -
         return False, str(e)
 
 
+def rewrite_embedded_file_link(href: str, base_url: str) -> str | None:
+    """Return the canonical download URL for a Canvas file link, or None.
+
+    Only links pointing at a Canvas file (/files/<id>) on this instance's host
+    are rewritten; external links are ignored so they aren't mangled. Links that
+    already point at the download endpoint are returned unchanged.
+    """
+    if href.startswith('/'):
+        href = base_url + href
+
+    parsed = urlparse(href)
+    # Only Canvas files on this instance. This guards against external URLs whose
+    # path happens to contain "/files/<digits>" (e.g. a government PDF host).
+    if parsed.netloc != urlparse(base_url).netloc:
+        return None
+    if not re.search(r'/files/\d+', parsed.path):
+        return None
+
+    # Already a download link: leave it (and any verifier query) untouched.
+    if re.search(r'/files/\d+/download', parsed.path):
+        return href
+
+    # Append the download endpoint, dropping any query string so we don't end up
+    # with a doubled "/download/download".
+    path = parsed.path.rstrip('/')
+    return f"{parsed.scheme}://{parsed.netloc}{path}/download"
+
+
 def process_page(session: requests.Session, base_url: str, course_id: str,
                  page_url_slug: str, output_dir: str) -> tuple[bool, str, list[str]]:
     """Fetch a Canvas page via API, save its text, and return embedded file URLs.
@@ -296,15 +324,9 @@ def process_page(session: requests.Session, base_url: str, course_id: str,
     # Extract embedded file links
     embedded_files = []
     for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
-        # Match Canvas file URLs like /courses/NNN/files/NNN or /files/NNN
-        if re.search(r'/files/\d+', href):
-            if href.startswith('/'):
-                href = base_url + href
-            # Ensure we get the download version
-            if '/download' not in href:
-                href = re.sub(r'(\?.*)?$', '/download', href)
-            embedded_files.append(href)
+        download_url = rewrite_embedded_file_link(a_tag['href'], base_url)
+        if download_url:
+            embedded_files.append(download_url)
 
     # Convert to text
     for elem in soup.find_all(['script', 'style']):
