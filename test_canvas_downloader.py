@@ -46,6 +46,32 @@ class RewriteEmbeddedFileLink(unittest.TestCase):
         href = "https://brand.hopkinsmedicine.org/images/PDFs/JHM-Org-Chart.pdf"
         self.assertIsNone(rewrite_embedded_file_link(href, BASE))
 
+    def test_preview_suffix_is_normalised_to_download(self):
+        # Regression: Canvas emits "/files/<id>/preview" for inline previews.
+        # Appending to the full path produced ".../preview/download" -> 404.
+        href = "https://jhu.instructure.com/courses/134519/files/18058517/preview"
+        self.assertEqual(
+            rewrite_embedded_file_link(href, BASE),
+            "https://jhu.instructure.com/courses/134519/files/18058517/download",
+        )
+
+    def test_protocol_relative_url_is_resolved(self):
+        # Regression: "//host/..." starts with "/", so naive concatenation
+        # produced "https://jhu.instructure.com//jhu.instructure.com/...".
+        href = "//jhu.instructure.com/courses/1/files/2?wrap=1"
+        self.assertEqual(
+            rewrite_embedded_file_link(href, BASE),
+            "https://jhu.instructure.com/courses/1/files/2/download",
+        )
+
+    def test_host_comparison_is_case_insensitive(self):
+        # Hostnames are case-insensitive; this is still our own Canvas instance.
+        href = "https://JHU.instructure.com/courses/1/files/2"
+        self.assertEqual(
+            rewrite_embedded_file_link(href, BASE),
+            "https://JHU.instructure.com/courses/1/files/2/download",
+        )
+
     def test_canvas_non_file_link_is_ignored(self):
         href = "https://jhu.instructure.com/courses/134519/assignments/42"
         self.assertIsNone(rewrite_embedded_file_link(href, BASE))

@@ -11,7 +11,7 @@ import http.cookiejar
 import os
 import re
 import sys
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -277,25 +277,29 @@ def rewrite_embedded_file_link(href: str, base_url: str) -> str | None:
     are rewritten; external links are ignored so they aren't mangled. Links that
     already point at the download endpoint are returned unchanged.
     """
-    if href.startswith('/'):
-        href = base_url + href
+    # urljoin resolves relative and protocol-relative ("//host/...") hrefs, which
+    # plain concatenation would mangle into "<base>//host/...".
+    href = urljoin(base_url, href)
 
     parsed = urlparse(href)
     # Only Canvas files on this instance. This guards against external URLs whose
     # path happens to contain "/files/<digits>" (e.g. a government PDF host).
-    if parsed.netloc != urlparse(base_url).netloc:
+    # Hostnames are case-insensitive, so compare them lowercased.
+    if parsed.netloc.lower() != urlparse(base_url).netloc.lower():
         return None
-    if not re.search(r'/files/\d+', parsed.path):
+    match = re.search(r'/files/\d+', parsed.path)
+    if not match:
         return None
 
     # Already a download link: leave it (and any verifier query) untouched.
     if re.search(r'/files/\d+/download', parsed.path):
         return href
 
-    # Append the download endpoint, dropping any query string so we don't end up
-    # with a doubled "/download/download".
-    path = parsed.path.rstrip('/')
-    return f"{parsed.scheme}://{parsed.netloc}{path}/download"
+    # Truncate the path at the file id before appending the download endpoint.
+    # Truncating (rather than appending to the whole path) also normalises viewer
+    # suffixes such as "/files/<id>/preview", which would otherwise turn into
+    # ".../preview/download". Dropping the query avoids a doubled "/download".
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path[:match.end()]}/download"
 
 
 def process_page(session: requests.Session, base_url: str, course_id: str,
