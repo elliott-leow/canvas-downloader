@@ -3,7 +3,9 @@
 
 import unittest
 
-from canvas_downloader import rewrite_embedded_file_link
+from canvas_downloader import process_page
+
+from canvas_downloader import external_link_target, rewrite_embedded_file_link
 
 BASE = "https://jhu.instructure.com"
 
@@ -75,6 +77,63 @@ class RewriteEmbeddedFileLink(unittest.TestCase):
     def test_canvas_non_file_link_is_ignored(self):
         href = "https://jhu.instructure.com/courses/134519/assignments/42"
         self.assertIsNone(rewrite_embedded_file_link(href, BASE))
+
+
+class ExternalLinkTarget(unittest.TestCase):
+    def test_off_instance_link_is_returned_absolute(self):
+        href = "https://www.energy.gov/sites/default/files/2022-03/Chart.pdf"
+        self.assertEqual(external_link_target(href, BASE), href)
+
+    def test_same_instance_link_is_ignored(self):
+        # Module items already record Canvas's own pages.
+        href = "https://jhu.instructure.com/courses/134519/assignments/42"
+        self.assertIsNone(external_link_target(href, BASE))
+
+    def test_relative_link_is_ignored_as_same_instance(self):
+        self.assertIsNone(external_link_target("/courses/1/quizzes/2", BASE))
+
+    def test_mailto_and_anchor_are_ignored(self):
+        self.assertIsNone(external_link_target("mailto:prof@jhu.edu", BASE))
+        self.assertIsNone(external_link_target("#section-2", BASE))
+
+
+class ProcessPageLinkSplit(unittest.TestCase):
+    """process_page must split page links into downloads vs. recorded references."""
+
+    BODY = (
+        '<a href="https://jhu.instructure.com/courses/1/files/2?wrap=1">Syllabus</a>'
+        '<a href="/courses/1/files/3/preview">Slides</a>'
+        '<a href="https://www.energy.gov/x.pdf">DOE</a>'
+        '<a href="https://www.energy.gov/x.pdf">DOE again</a>'
+        '<a href="mailto:prof@jhu.edu">Email</a>'
+        '<p>Some body text.</p>'
+    )
+
+    def _run(self):
+        import tempfile
+
+        class R:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(_self): return {"title": "Week 1", "body": ProcessPageLinkSplit.BODY}
+
+        class S:
+            def get(self, url, **kw): return R()
+
+        return process_page(S(), BASE, "1", "week-1", tempfile.mkdtemp())
+
+    def test_canvas_files_become_downloads(self):
+        ok, _, embedded, _ = self._run()
+        self.assertTrue(ok)
+        self.assertEqual(embedded, [
+            "https://jhu.instructure.com/courses/1/files/2/download",
+            "https://jhu.instructure.com/courses/1/files/3/download",
+        ])
+
+    def test_external_links_are_collected_and_deduped(self):
+        ok, _, _, external = self._run()
+        self.assertTrue(ok)
+        self.assertEqual(external, ["https://www.energy.gov/x.pdf"])
 
 
 if __name__ == "__main__":

@@ -302,40 +302,64 @@ def rewrite_embedded_file_link(href: str, base_url: str) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path[:match.end()]}/download"
 
 
+def external_link_target(href: str, base_url: str) -> str | None:
+    """Return an absolute off-instance http(s) link, or None.
+
+    Links on this Canvas instance are skipped: module items already record those,
+    and in-page anchors aren't references worth keeping.
+    """
+    absolute = urljoin(base_url, href)
+    parsed = urlparse(absolute)
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    if parsed.netloc.lower() == urlparse(base_url).netloc.lower():
+        return None
+    return absolute
+
+
 def process_page(session: requests.Session, base_url: str, course_id: str,
                  page_url_slug: str, output_dir: str,
-                 overwrite: bool = False) -> tuple[bool, str, list[str]]:
-    """Fetch a Canvas page via API, save its text, and return embedded file URLs.
+                 overwrite: bool = False) -> tuple[bool, str, list[str], list[str]]:
+    """Fetch a Canvas page via API, save its text, and return its outbound links.
 
-    Returns (success, filename_or_error, list_of_embedded_file_urls).
+    Returns (success, filename_or_error, embedded_file_urls, external_links).
     """
     url = f"{base_url}/api/v1/courses/{course_id}/pages/{page_url_slug}"
     try:
         resp = session.get(url, timeout=30)
         if resp.status_code in (401, 403):
-            return False, "Authentication failed", []
+            return False, "Authentication failed", [], []
         if resp.status_code == 404:
-            return False, "Page not found", []
+            return False, "Page not found", [], []
         resp.raise_for_status()
     except requests.RequestException as e:
-        return False, str(e), []
+        return False, str(e), [], []
 
     page_data = resp.json()
     title = sanitize_filename(page_data.get('title', 'Untitled Page'))
     body_html = page_data.get('body', '')
 
     if not body_html or not body_html.strip():
-        return False, "No content", []
+        return False, "No content", [], []
 
     # Parse HTML body
     soup = BeautifulSoup(body_html, HTML_PARSER)
 
     # Extract embedded file links
     embedded_files = []
+    external_links = []
+    seen_external = set()
     for a_tag in soup.find_all('a', href=True):
-        download_url = rewrite_embedded_file_link(a_tag['href'], base_url)
+        href = a_tag['href']
+        download_url = rewrite_embedded_file_link(href, base_url)
         if download_url:
             embedded_files.append(download_url)
+            continue
+        # Not one of our files; keep any off-instance reference for links.txt.
+        external = external_link_target(href, base_url)
+        if external and external not in seen_external:
+            seen_external.add(external)
+            external_links.append(external)
 
     # Convert to text
     for elem in soup.find_all(['script', 'style']):
@@ -343,7 +367,7 @@ def process_page(session: requests.Session, base_url: str, course_id: str,
     text = soup.get_text(separator='\n', strip=True)
 
     if not text.strip():
-        return False, "No text content", embedded_files
+        return False, "No text content", embedded_files, external_links
 
     filename = f"{title}.txt"
     filepath = os.path.join(output_dir, filename)
@@ -358,7 +382,7 @@ def process_page(session: requests.Session, base_url: str, course_id: str,
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(text)
 
-    return True, filename, embedded_files
+    return True, filename, embedded_files, external_links
 
 
 def process_module_items(session: requests.Session, base_url: str, course_id: str,
@@ -386,7 +410,7 @@ def process_module_items(session: requests.Session, base_url: str, course_id: st
         elif item_type == 'Page':
             page_url_slug = item.get('page_url')
             if page_url_slug:
-                success, result, embedded = process_page(
+                success, result, embedded, external = process_page(
                     session, base_url, course_id, page_url_slug, module_dir, overwrite=overwrite)
                 status = "ok" if success else "FAIL"
                 print(f"      [Page] {result} ({status})")
@@ -394,6 +418,9 @@ def process_module_items(session: requests.Session, base_url: str, course_id: st
                     stats['pages_ok'] += 1
                 else:
                     stats['pages_fail'] += 1
+                # External references in the page body go to links.txt
+                for ext in external:
+                    links.append(f"[{title}] {ext}")
                 # Download embedded files from the page
                 for file_url in embedded:
                     fs, fr = download_file_by_url(session, file_url, module_dir, overwrite=overwrite)

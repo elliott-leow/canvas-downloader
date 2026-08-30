@@ -11,7 +11,7 @@ Works with any Canvas LMS instance.
 - Downloads all files from every module (PDFs, slides, documents, etc.)
 - Saves Canvas page text content as `.txt` files
 - Extracts embedded file links from pages
-- Collects external links (assignments, quizzes, external tools) into `links.txt`
+- Collects external links (assignments, quizzes, external tools, and off-site links found in page bodies) into `links.txt`
 - Organizes everything by module folder -- ready to use as context for AI assistants
 - Two interfaces: **CLI** and **Web UI**
 
@@ -68,6 +68,9 @@ python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --c
 
 # Custom output directory
 python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser chrome --output ./my-course
+
+# Re-download over a previous run instead of piling up file_1, file_2, ...
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox --overwrite
 ```
 
 ### Web UI
@@ -95,7 +98,10 @@ downloads/
 
 - **Files** are downloaded with their original names
 - **Canvas pages** are saved as `.txt` files
-- **External links** (assignments, quizzes, external tools) are collected in `links.txt`
+- **External links** (assignments, quizzes, external tools, plus any off-site
+  links referenced inside page bodies) are collected in `links.txt`
+- **Re-running** appends `_1`, `_2`, ... to existing filenames; pass `--overwrite`/`-w`
+  to replace them instead
 
 ## Requirements
 
