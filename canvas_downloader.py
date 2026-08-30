@@ -184,10 +184,12 @@ def fetch_course_name(session: requests.Session, base_url: str, course_id: str) 
     return resp.json().get('name', f'Course {course_id}')
 
 
-def download_file_from_api(session: requests.Session, file_api_url: str, output_dir: str) -> tuple[bool, str]:
+def download_file_from_api(session: requests.Session, file_api_url: str, output_dir: str,
+                            overwrite: bool = False) -> tuple[bool, str]:
     """Download a file given its Canvas API URL (e.g. /api/v1/files/:id).
 
     The API returns JSON with a `url` field containing a temporary download link.
+    If `overwrite` is True, an existing file at the target path is replaced.
     """
     try:
         resp = session.get(file_api_url, timeout=30)
@@ -204,13 +206,13 @@ def download_file_from_api(session: requests.Session, file_api_url: str, output_
 
         filepath = os.path.join(output_dir, filename)
 
-        # Handle duplicate filenames
-        base, ext = os.path.splitext(filename)
-        counter = 1
-        while os.path.exists(filepath):
-            filename = f"{base}_{counter}{ext}"
-            filepath = os.path.join(output_dir, filename)
-            counter += 1
+        if not overwrite:
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(filepath):
+                filename = f"{base}_{counter}{ext}"
+                filepath = os.path.join(output_dir, filename)
+                counter += 1
 
         dl_resp = session.get(download_url, stream=True, timeout=120)
         dl_resp.raise_for_status()
@@ -224,7 +226,8 @@ def download_file_from_api(session: requests.Session, file_api_url: str, output_
         return False, str(e)
 
 
-def download_file_by_url(session: requests.Session, url: str, output_dir: str) -> tuple[bool, str]:
+def download_file_by_url(session: requests.Session, url: str, output_dir: str,
+                          overwrite: bool = False) -> tuple[bool, str]:
     """Download a file by direct URL (for embedded file links in pages)."""
     try:
         resp = session.get(url, stream=True, timeout=120, allow_redirects=True)
@@ -249,12 +252,13 @@ def download_file_by_url(session: requests.Session, url: str, output_dir: str) -
         filename = sanitize_filename(filename)
         filepath = os.path.join(output_dir, filename)
 
-        base, ext = os.path.splitext(filename)
-        counter = 1
-        while os.path.exists(filepath):
-            filename = f"{base}_{counter}{ext}"
-            filepath = os.path.join(output_dir, filename)
-            counter += 1
+        if not overwrite:
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(filepath):
+                filename = f"{base}_{counter}{ext}"
+                filepath = os.path.join(output_dir, filename)
+                counter += 1
 
         with open(filepath, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=8192):
@@ -295,7 +299,8 @@ def rewrite_embedded_file_link(href: str, base_url: str) -> str | None:
 
 
 def process_page(session: requests.Session, base_url: str, course_id: str,
-                 page_url_slug: str, output_dir: str) -> tuple[bool, str, list[str]]:
+                 page_url_slug: str, output_dir: str,
+                 overwrite: bool = False) -> tuple[bool, str, list[str]]:
     """Fetch a Canvas page via API, save its text, and return embedded file URLs.
 
     Returns (success, filename_or_error, list_of_embedded_file_urls).
@@ -339,11 +344,12 @@ def process_page(session: requests.Session, base_url: str, course_id: str,
     filename = f"{title}.txt"
     filepath = os.path.join(output_dir, filename)
 
-    counter = 1
-    while os.path.exists(filepath):
-        filename = f"{title}_{counter}.txt"
-        filepath = os.path.join(output_dir, filename)
-        counter += 1
+    if not overwrite:
+        counter = 1
+        while os.path.exists(filepath):
+            filename = f"{title}_{counter}.txt"
+            filepath = os.path.join(output_dir, filename)
+            counter += 1
 
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(text)
@@ -352,7 +358,8 @@ def process_page(session: requests.Session, base_url: str, course_id: str,
 
 
 def process_module_items(session: requests.Session, base_url: str, course_id: str,
-                         items: list[dict], module_dir: str, links: list[str]) -> dict:
+                         items: list[dict], module_dir: str, links: list[str],
+                         overwrite: bool = False) -> dict:
     """Process all items in a module. Returns stats dict."""
     stats = {'files_ok': 0, 'files_fail': 0, 'pages_ok': 0, 'pages_fail': 0}
 
@@ -364,7 +371,7 @@ def process_module_items(session: requests.Session, base_url: str, course_id: st
             content_id = item.get('content_id')
             if content_id:
                 file_api_url = f"{base_url}/api/v1/files/{content_id}"
-                success, result = download_file_from_api(session, file_api_url, module_dir)
+                success, result = download_file_from_api(session, file_api_url, module_dir, overwrite=overwrite)
                 status = "ok" if success else "FAIL"
                 print(f"      [File] {result} ({status})")
                 if success:
@@ -376,7 +383,7 @@ def process_module_items(session: requests.Session, base_url: str, course_id: st
             page_url_slug = item.get('page_url')
             if page_url_slug:
                 success, result, embedded = process_page(
-                    session, base_url, course_id, page_url_slug, module_dir)
+                    session, base_url, course_id, page_url_slug, module_dir, overwrite=overwrite)
                 status = "ok" if success else "FAIL"
                 print(f"      [Page] {result} ({status})")
                 if success:
@@ -385,7 +392,7 @@ def process_module_items(session: requests.Session, base_url: str, course_id: st
                     stats['pages_fail'] += 1
                 # Download embedded files from the page
                 for file_url in embedded:
-                    fs, fr = download_file_by_url(session, file_url, module_dir)
+                    fs, fr = download_file_by_url(session, file_url, module_dir, overwrite=overwrite)
                     fstatus = "ok" if fs else "FAIL"
                     print(f"        [Embedded] {fr} ({fstatus})")
                     if fs:
@@ -451,6 +458,12 @@ def main():
         help='Output directory (default: ./downloads)'
     )
 
+    parser.add_argument(
+        '--overwrite', '-w',
+        action='store_true',
+        help='Overwrite existing files instead of appending _1, _2, ... suffixes'
+    )
+
     args = parser.parse_args()
 
     if not validate_canvas_url(args.url):
@@ -510,7 +523,7 @@ def main():
 
         # Track which module links came from
         module_links = []
-        stats = process_module_items(session, base_url, course_id, items, module_dir, module_links)
+        stats = process_module_items(session, base_url, course_id, items, module_dir, module_links, overwrite=args.overwrite)
 
         # Add module context to links
         for link in module_links:
