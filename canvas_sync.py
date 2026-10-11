@@ -251,6 +251,101 @@ class Sync:
         except (requests.RequestException, ValueError, KeyError, OSError) as error:
             self.record_error(course_id, kind, error)
 
+    def discussion(self, course_id, folder, topic, announcement=False, group_id=None):
+        topic_id = str(int(topic["id"]))
+        category = "Announcements" if announcement else "Discussions"
+        context = f"/api/v1/groups/{int(group_id)}" if group_id else f"/api/v1/courses/{course_id}"
+        if "message" not in topic and not topic.get("locked_for_user"):
+            topic = dict(topic, **self.get(self.base + context + f"/discussion_topics/{topic_id}").json())
+        title = topic.get("title") or category[:-1]
+        source = topic.get("html_url") or (
+            f"{self.base}/groups/{group_id}/discussion_topics/{topic_id}" if group_id else
+            f"{self.base}/courses/{course_id}/discussion_topics/{topic_id}")
+        suffix = f":group:{group_id}" if group_id else ""
+        key = f"{course_id}:{category.lower()}:{topic_id}{suffix}"
+        filename = f"{topic_id}-{name(title)}" + (f"-group-{group_id}" if group_id else "") + ".txt"
+        lines = [title, f"Source: {source}", f"Author: {topic.get('user_name') or (topic.get('author') or {}).get('display_name') or 'Unknown'}",
+                 f"Posted: {topic.get('posted_at') or 'Not specified'}",
+                 f"Last reply: {topic.get('last_reply_at') or 'Not specified'}",
+                 f"Published: {topic.get('published', 'Unknown')}",
+                 f"Scheduled posting: {topic.get('delayed_post_at') or 'Not specified'}"]
+        if topic.get("locked_for_user"):
+            self.status["skipped_locked"] += 1
+            lines.append("\nThis topic is not currently available to your Canvas account.")
+        else:
+            lines.extend(["\nTopic", html_text(topic.get("message"))])
+            for attachment in topic.get("attachments") or []:
+                lines.append(f"Attachment: {attachment.get('display_name') or attachment.get('filename') or 'File'} — {attachment.get('url', '')}")
+            if topic.get("user_can_see_posts") is False:
+                lines.append("\nReplies are not visible to your Canvas account; Canvas may require an initial post.")
+            else:
+                try:
+                    view = self.get(self.base + context + f"/discussion_topics/{topic_id}/view",
+                                    params={"include_new_entries": 1}).json()
+                except requests.HTTPError as error:
+                    if error.response.status_code not in (403, 404):
+                        raise  # Transient failures preserve the last complete thread.
+                    self.record_error(course_id, f"{category.lower()}-replies:{topic_id}{suffix}", error)
+                    lines.append("\nReplies are unavailable to your Canvas account.")
+                else:
+                    if not isinstance(view, dict) or not isinstance(view.get("view"), list):
+                        raise ValueError("Canvas returned an unexpected discussion view")
+                    authors = {str(p["id"]): p.get("display_name") or "Unknown"
+                               for p in view.get("participants") or []}
+                    entries = {}
+                    stack = [(entry, None) for entry in reversed(view.get("view") or [])]
+                    while stack:
+                        entry, parent = stack.pop()
+                        entry_id = str(entry["id"])
+                        entries[entry_id] = dict(entry, parent_id=entry.get("parent_id", parent))
+                        stack.extend((reply, entry["id"]) for reply in reversed(entry.get("replies") or []))
+                    # New entries are a flat, fresher overlay on the eventually consistent view.
+                    for entry in view.get("new_entries") or []:
+                        entry_id = str(entry["id"])
+                        entries[entry_id] = dict(entries.get(entry_id, {}), **entry)
+                    lines.append("\nReplies")
+                    if not entries:
+                        lines.append("No visible replies.")
+                    for entry_id, entry in sorted(entries.items(), key=lambda pair: (pair[1].get("created_at") or "", int(pair[0]))):
+                        author = authors.get(str(entry.get("user_id")), "Unknown")
+                        parent = entry.get("parent_id")
+                        lines.extend([f"\nEntry {entry_id}" + (f" (reply to {parent})" if parent is not None else ""),
+                                      f"Author: {author}", f"Posted: {entry.get('created_at') or 'Not specified'}",
+                                      "[Deleted entry]" if entry.get("deleted") else html_text(entry.get("message"))])
+                        attachment = entry.get("attachment")
+                        if attachment and not entry.get("deleted"):
+                            lines.append(f"Attachment: {attachment.get('display_name') or attachment.get('filename') or 'File'} — {attachment.get('url', '')}")
+        self.write_text(key, f"{folder}/Canvas Sync/{category}/{filename}", "\n".join(lines) + "\n")
+
+    def sync_topics(self, course_id, folder):
+        endpoint = f"/api/v1/courses/{course_id}/discussion_topics"
+        for announcement in (True, False):
+            category = "announcements" if announcement else "discussions"
+            try:
+                # Some Canvas instances treat any supplied only_announcements value
+                # as enabled, including the string "false". Omission means discussions.
+                topics = self.listing(endpoint, {"only_announcements": "true"} if announcement else None)
+            except AuthenticationExpired:
+                raise
+            except (requests.RequestException, ValueError) as error:
+                self.record_error(course_id, category, error)
+                continue
+            for topic in topics:
+                if not announcement and topic.get("is_announcement") is True:
+                    continue
+                if any(c["id"] == course_id and c["hidden"] for c in course_catalog(self.root)["courses"]):
+                    break
+                self.attempt(course_id, f"{category}:{topic.get('id')}",
+                             lambda: self.discussion(course_id, folder, topic, announcement))
+                # Canvas lists the group-specific children accessible to this account.
+                for child in ([] if topic.get("locked_for_user") else topic.get("group_topic_children") or []):
+                    def group_topic():
+                        group_id, child_id = int(child["group_id"]), int(child["id"])
+                        data = self.get(f"{self.base}/api/v1/groups/{group_id}/discussion_topics/{child_id}").json()
+                        self.discussion(course_id, folder, data, announcement, group_id)
+                    self.attempt(course_id, f"{category}-group:{child.get('id')}", group_topic)
+                self.save()
+
     def course(self, course):
         course_id = str(int(course["id"]))
         folder = self.folder(course)
@@ -310,6 +405,7 @@ class Sync:
                                         "\n\n".join(lines))
                     self.attempt(course_id, f"module:{item.get('id')}", module)
             self.save()
+        self.sync_topics(course_id, folder)
         self.save()
 
     def discover(self):

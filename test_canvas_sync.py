@@ -116,6 +116,86 @@ class SyncTests(unittest.TestCase):
         self.assertTrue(course["sync_enabled"])
         self.assertEqual(course["roles"], ["student", "ta"])
 
+    def test_announcement_and_nested_discussion_with_fresh_entries(self):
+        announcement = {"id": 10, "title": "Exam update", "message": "<p>Exam moved to Friday.</p>", "user_name": "Instructor", "is_announcement": True}
+        discussion = {"id": 20, "title": "Reading discussion", "message": "<p>Explain the argument.</p>"}
+        tree = {"participants": [{"id": 1, "display_name": "Student"}, {"id": 2, "display_name": "TA"}],
+                "view": [{"id": 100, "user_id": 1, "message": "<p>Old answer</p>", "replies": [
+                    {"id": 101, "user_id": 2, "message": "<p>A nested response</p>"}]}],
+                "new_entries": [{"id": 100, "user_id": 1, "message": "<p>Edited answer</p>"},
+                                {"id": 102, "user_id": 1, "parent_id": 101, "message": "<p>Newest reply</p>"}]}
+        def get(url, **kwargs):
+            if url.endswith("/discussion_topics"):
+                self.assertNotEqual(kwargs["params"].get("only_announcements"), "false")
+                return response([announcement] if kwargs["params"].get("only_announcements") == "true" else [discussion, announcement])
+            return response({"view": [], "participants": []} if "/10/view" in url else tree)
+        self.session.get.side_effect = get
+        self.sync.sync_topics("1", "Course")
+        announcement_file = self.root / "Course/Canvas Sync/Announcements/10-Exam update.txt"
+        thread_file = self.root / "Course/Canvas Sync/Discussions/20-Reading discussion.txt"
+        self.assertIn("Exam moved to Friday.", announcement_file.read_text())
+        thread = thread_file.read_text()
+        self.assertIn("Edited answer", thread)
+        self.assertNotIn("Old answer", thread)
+        self.assertEqual(thread.count("Entry 100"), 1)
+        self.assertIn("Entry 101 (reply to 100)", thread)
+        self.assertIn("Entry 102 (reply to 101)", thread)
+        self.assertIn("Author: TA", thread)
+        self.sync.sync_topics("1", "Course")
+        self.assertEqual(self.sync.status["updated"], 2)
+        self.assertEqual(self.sync.status["unchanged"], 2)
+
+    def test_post_first_restriction_and_unavailable_replies(self):
+        topic = {"id": 20, "title": "Discussion", "message": "Visible prompt", "user_can_see_posts": False}
+        self.sync.discussion("1", "Course", topic)
+        self.session.get.assert_not_called()
+        path = self.root / "Course/Canvas Sync/Discussions/20-Discussion.txt"
+        self.assertIn("Visible prompt", path.read_text())
+        self.assertIn("not visible", path.read_text())
+        topic["user_can_see_posts"] = True
+        self.session.get.return_value = response({}, code=403)
+        self.sync.discussion("1", "Course", topic)
+        self.assertIn("Replies are unavailable", path.read_text())
+        self.assertEqual(self.sync.status["errors"][0]["error"], "HTTP 403")
+
+    def test_transient_thread_failure_preserves_complete_archive(self):
+        topic = {"id": 20, "title": "Discussion", "message": "Prompt"}
+        self.session.get.return_value = response({"view": [{"id": 100, "message": "Existing complete reply"}]})
+        self.sync.discussion("1", "Course", topic)
+        path = self.root / "Course/Canvas Sync/Discussions/20-Discussion.txt"
+        previous = path.read_text()
+        self.session.get.return_value = response({}, code=503)
+        self.sync.attempt("1", "discussion", lambda: self.sync.discussion("1", "Course", topic))
+        self.assertEqual(path.read_text(), previous)
+        self.assertEqual(self.sync.status["errors"][0]["error"], "HTTP 503")
+
+    def test_group_child_and_deleted_reply(self):
+        topic = {"id": 20, "title": "Group topic", "message": "Parent", "group_topic_children": [{"id": 30, "group_id": 5}]}
+        def get(url, **kwargs):
+            if url.endswith("/discussion_topics"):
+                return response([] if kwargs["params"].get("only_announcements") == "true" else [topic])
+            if url.endswith("/discussion_topics/30"):
+                return response({"id": 30, "title": "Group topic", "message": "Group prompt"})
+            return response({"view": [{"id": 10, "deleted": True, "message": "Removed body"}]})
+        self.session.get.side_effect = get
+        self.sync.sync_topics("1", "Course")
+        path = self.root / "Course/Canvas Sync/Discussions/30-Group topic-group-5.txt"
+        self.assertIn("Group prompt", path.read_text())
+        self.assertIn("[Deleted entry]", path.read_text())
+        self.assertNotIn("Removed body", path.read_text())
+        self.assertTrue(any("/api/v1/groups/5/discussion_topics/30/view" in call.args[0] for call in self.session.get.call_args_list))
+
+    def test_missing_topic_body_fetches_detail_and_keeps_publication_state(self):
+        self.session.get.side_effect = [
+            response({"id": 20, "title": "Draft", "message": "Full prompt", "published": False, "delayed_post_at": "2099-01-01"}),
+            response({"view": []})]
+        self.sync.discussion("1", "Course", {"id": 20, "title": "Draft"})
+        text = (self.root / "Course/Canvas Sync/Discussions/20-Draft.txt").read_text()
+        self.assertIn("Full prompt", text)
+        self.assertIn("Published: False", text)
+        self.assertIn("Scheduled posting: 2099-01-01", text)
+        self.assertTrue(self.session.get.call_args_list[0].args[0].endswith("/discussion_topics/20"))
+
 
 if __name__ == "__main__":
     unittest.main()

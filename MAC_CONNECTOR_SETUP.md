@@ -122,6 +122,7 @@ Use these prompts with Canvas Files enabled:
 - “Include my past calculus course, then sync selected courses now.”
 - “Refresh the course list without downloading files.”
 - “Show the last sync status and any failures.”
+- “Summarize the latest announcements and discussion replies in my selected courses.”
 
 Hidden courses are excluded from search, file lists, direct fetch, and subsequent
 downloads. Hiding a course does not delete existing local files. A download already
@@ -257,9 +258,16 @@ permissions. Course content reaches ChatGPT/Claude only when its tools retrieve 
   supervise the foreground commands with their own service manager.
 
 Sync archives accessible Canvas files, page text, assignment descriptions, syllabi,
-and module outlines. Unchanged file timestamps and text hashes avoid repeated
+module outlines, announcements, and discussion content. Announcements and discussions
+are saved in their own folders with topic bodies, authors, timestamps, source URLs,
+nested reply relationships, and available group-specific threads. The sync checks
+fresh replies on each run, including entries newer than Canvas's cached thread view.
+Canvas post-first and group-access restrictions are respected; unavailable replies
+are labeled, and temporary failures preserve the last complete thread. Attachment
+links are recorded; attachments are also available when the ordinary file sync can
+retrieve them. Unchanged file timestamps and text hashes avoid repeated
 writes. Downloads replace files atomically. Deleted/renamed remote items do not
-remove old local copies. External websites, submissions, discussions, and quiz
+remove old local copies. External websites, submissions, and quiz
 question bodies are not synchronized. Media files may download as Canvas files,
 but the assistant reads only TXT, Markdown, PDF, DOCX, and PPTX; diagrams, images,
 and scanned text are not extracted. Extraction excludes files over 25 MB and caps
@@ -274,5 +282,6 @@ uv pip install --python .venv-mcp/bin/python -r requirements-mcp.txt
 
 Tests cover protected HTTP and stdio tools, course visibility, incremental sync,
 pagination, login failure, atomic writes, portable setup, OAuth discovery/client
-registration/persistence, and the owner gate. A new GitHub app and browser consent
+registration/persistence, the owner gate, announcements, nested/group replies,
+fresh-entry updates, deleted posts, and reply-access restrictions. A new GitHub app and browser consent
 still need an account-level check; unit/integration tests do not prove those steps.

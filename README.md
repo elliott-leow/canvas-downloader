@@ -34,6 +34,8 @@ and works while the Terminal is open and your computer is awake.
 
 - Downloads all files from every module (PDFs, slides, documents, etc.)
 - Saves Canvas page text content as `.txt` files
+- MCP sync includes announcements and discussion prompts, posts, nested replies,
+  and accessible group threads, with authors, timestamps, and source links
 - Extracts embedded file links from pages
 - Collects external links (assignments, quizzes, external tools, and off-site links found in page bodies) into `links.txt`
 - Organizes everything by module folder -- ready to use as context for AI assistants
