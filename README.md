@@ -6,6 +6,30 @@ Built for students who want to preserve class materials and build a local contex
 
 Works with any Canvas LMS instance.
 
+## ChatGPT and Claude connectors
+
+Keep your selected Canvas courses available in ChatGPT and Claude on the web.
+The connector runs on your own computer, refreshes every 30 minutes, and lets you
+include or hide courses directly from chat. Past courses are hidden by default.
+
+```sh
+git clone https://github.com/elliott-leow/canvas-downloader.git
+cd canvas-downloader
+./setup.sh
+```
+
+Log into Canvas in Firefox first. The guided script installs its own Python
+environment, asks for your school's Canvas URL, starts a free Cloudflare HTTPS
+tunnel, and guides you through a free GitHub OAuth app for private sign-in. Only
+your GitHub account can access your installation. No model API key or domain is
+required for the temporary-URL route. ChatGPT/Claude custom-connector access still
+depends on your account and workspace.
+
+Follow the [complete MCP setup guide](MAC_CONNECTOR_SETUP.md) for connecting both
+web apps, using a permanent URL, and enabling automatic Mac startup. Setup supports
+macOS and Linux; login services are macOS-only. The temporary URL changes on restart
+and works while the Terminal is open and your computer is awake.
+
 ## Features
 
 - Downloads all files from every module (PDFs, slides, documents, etc.)
@@ -14,6 +38,8 @@ Works with any Canvas LMS instance.
 - Collects external links (assignments, quizzes, external tools, and off-site links found in page bodies) into `links.txt`
 - Organizes everything by module folder -- ready to use as context for AI assistants
 - Two interfaces: **CLI** and **Web UI**
+- **MCP connector:** nine tools to find course materials, manage hidden courses,
+  inspect your roles in each course, and request syncs from ChatGPT/Claude
 
 ## Setup
 
@@ -120,6 +146,11 @@ The course may be empty, unpublished, or you may not have access.
 Some browsers lock their cookie databases while running. Try closing the browser first, or use the `--cookies` file method instead.
 
 ## Using as a Context Bank for Claude Code
+
+For ChatGPT or Claude **web** access from your Mac, see
+[Mac connector setup](MAC_CONNECTOR_SETUP.md). The MCP server searches and reads
+your archive, lets you include/hide courses, and requests incremental background
+syncs. Account/tunnel setup is required separately.
 
 Once you've downloaded a course, you can point Claude Code at the materials:
 

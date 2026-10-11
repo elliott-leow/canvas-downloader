@@ -1,6 +1,14 @@
 # Virtual environments
 venv/
 .venv/
+.venv-mcp/
+.mcp-token
+.connector-config.json
+.connector-secrets.json
+.connector-oauth/
+.connector-logs/
+.env
+.env.*
 env/
 
 # Python
@@ -13,6 +21,8 @@ build/
 
 # Downloads (user-generated content)
 downloads/
+output/
+tmp/
 
 # Cookies (sensitive)
 cookies.txt

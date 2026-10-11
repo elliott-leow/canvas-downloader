@@ -6,6 +6,8 @@ Downloads all files and pages from a Canvas LMS course using the REST API.
 Organizes content by module into subdirectories.
 """
 
+from __future__ import annotations
+
 import argparse
 import http.cookiejar
 import os
