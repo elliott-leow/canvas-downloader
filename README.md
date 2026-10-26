@@ -1,16 +1,115 @@
 # Canvas Course Downloader
 
-Back up your entire Canvas LMS course locally -- all files, pages, and links, organized by module.
+Create a local archive of the Canvas material your account can access. The CLI,
+local web app, background sync, and MCP connector share the same course-wide
+collector: module folders remain useful for navigation, while a course with no
+modules is still archived.
 
-Built for students who want to preserve class materials and build a local context bank for AI tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to help with assignments, studying, and review.
+The archive includes accessible files and embedded assets, page text, syllabus,
+assignments and rubrics, quiz metadata/instructions, calendar events,
+announcements, and discussions. Rich Canvas bodies retain links, table rows, and
+image/equation alt text; content that needs layout also receives an inert HTML
+companion. It does not retrieve restricted quiz answers, revision history,
+Inbox, OCR/transcription, or crawl media providers and other external sites.
 
-Works with any Canvas LMS instance.
+## Choose an interface
 
-## ChatGPT and Claude connectors
+- **CLI:** make a single course archive on demand.
+- **Local web UI:** make a temporary ZIP with a form and failed-only retry.
+- **MCP connector:** keep selected courses available to ChatGPT or Claude, with
+  periodic local sync. It retains its nine tool names and read-only archive access.
 
-Keep your selected Canvas courses available in ChatGPT and Claude on the web.
-The connector runs on your own computer, refreshes every 30 minutes, and lets you
-include or hide courses directly from chat. Past courses are hidden by default.
+## Install and authentication
+
+Python 3.10+ supports the CLI and web app. The connector requires Python 3.11+.
+Use a private environment appropriate to the interface:
+
+```sh
+python3 -m venv venv
+. venv/bin/activate
+python -m pip install -r requirements.txt          # CLI + local web app
+# or: python -m pip install -r requirements-mcp.txt # CLI + sync + MCP connector
+```
+
+`requirements-core.txt` contains the CLI/sync dependencies; `requirements.txt`
+adds Flask; `requirements-mcp.txt` adds FastMCP and PDF extraction without Flask.
+If you use both the web app and connector, reuse the full `.venv-mcp` environment
+created by `./setup.sh`, then add the web requirements to that same environment.
+Do not remove legacy environments or existing user archives automatically.
+
+Canvas authentication uses either browser cookies or a Netscape-format
+`cookies.txt` export. Supported browsers are Chrome, Firefox, Opera, Edge,
+Chromium, Brave, Vivaldi, and Safari. If browser-cookie access fails, close the
+browser or use a fresh cookie export.
+
+## CLI
+
+```sh
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser chrome --output ./my-course
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox --overwrite
+```
+
+Use `--include-personal` to add your own submissions, grades, and feedback, and
+`--include-groups` to add your groups’ files and pages. Both are opt-in:
+
+```sh
+python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" \
+  --browser firefox --include-personal --include-groups
+```
+
+Files have stable Canvas identities. Repeated references reuse one saved copy;
+renames retain their established path; local text edits and failed streaming
+downloads are preserved rather than silently replaced.
+`--overwrite` forces a refresh of tracked files. Partial archives return a nonzero
+CLI exit status; already saved material is retained.
+
+## Local web app
+
+```sh
+python app.py
+```
+
+Open <http://127.0.0.1:5000>, choose browser cookies or upload `cookies.txt`, and
+optionally expand **Additional course material** for personal or group content.
+Uploaded cookie files are removed after parsing. ZIP URLs are opaque, local, and
+available for one hour while the process runs.
+
+Partial results retain saved content and can retry only recorded failures. Retry
+state is in memory, bound to the originating browser session, and expires after
+one hour; cookie-file retries require another upload. A restart loses that retry
+queue but does not delete user archives.
+
+## Archive contents and coverage
+
+Course-wide material is stored alongside module folders, for example:
+
+```text
+Course Name/
+  Week 1/
+    lecture.pdf
+    Intro.txt
+    Intro.html
+  Canvas Sync/
+    Assignments/
+    Announcements/
+    Discussions/
+    Files/
+    Pages/
+    Quizzes/
+  links.txt
+  archive-status.json
+```
+
+`archive-status.json` records scope, partial failures, unavailable modules, and
+locked or unsupported content. Missing/locked Canvas items remain represented by
+availability metadata; previously saved bytes are not deleted. External links are
+references in `links.txt`, not downloaded websites.
+
+## ChatGPT and Claude connector
+
+Run the guided setup after logging into Canvas in Firefox:
 
 ```sh
 git clone https://github.com/elliott-leow/canvas-downloader.git
@@ -18,166 +117,38 @@ cd canvas-downloader
 ./setup.sh
 ```
 
-Log into Canvas in Firefox first. The guided script installs its own Python
-environment, asks for your school's Canvas URL, starts a free Cloudflare HTTPS
-tunnel, and guides you through a free GitHub OAuth app for private sign-in. Only
-your GitHub account can access your installation. No model API key or domain is
-required for the temporary-URL route. ChatGPT/Claude custom-connector access still
-depends on your account and workspace.
+It creates `.venv-mcp`, stores private local settings, and guides Canvas URL,
+browser, OAuth/token mode, and an optional temporary Cloudflare HTTPS endpoint.
+For durable connector, OAuth, tunnel, and macOS login-service instructions, see
+[MAC_CONNECTOR_SETUP.md](MAC_CONNECTOR_SETUP.md). Token mode is for Claude/local
+testing; the public ChatGPT route uses OAuth.
 
-Follow the [complete MCP setup guide](MAC_CONNECTOR_SETUP.md) for connecting both
-web apps, using a permanent URL, and enabling automatic Mac startup. Setup supports
-macOS and Linux; login services are macOS-only. The temporary URL changes on restart
-and works while the Terminal is open and your computer is awake.
+Connector sync keeps active courses visible and past courses hidden by default.
+Missing courses remain in catalog metadata instead of being erased. Configure
+optional personal/group collection during setup or later:
 
-## Features
-
-- Downloads all files from every module (PDFs, slides, documents, etc.)
-- Saves Canvas page text content as `.txt` files
-- MCP sync includes announcements and discussion prompts, posts, nested replies,
-  and accessible group threads, with authors, timestamps, and source links
-- Extracts embedded file links from pages
-- Collects external links (assignments, quizzes, external tools, and off-site links found in page bodies) into `links.txt`
-- Organizes everything by module folder -- ready to use as context for AI assistants
-- Two interfaces: **CLI** and **Web UI**
-- **MCP connector:** nine tools to find course materials, manage hidden courses,
-  inspect your roles in each course, and request syncs from ChatGPT/Claude
-
-## Setup
-
-```bash
-git clone https://github.com/elliott-leow/canvas-downloader.git
-cd canvas-downloader
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
-pip install -r requirements.txt
+```sh
+./setup.sh configure --include-personal --include-groups
 ```
 
-## Authentication
+The MCP archive interface searches extracted text only. `list_files` retains its
+string file IDs and adds a readable inventory: unsupported files and files over
+25 MiB are discoverable but cannot be fetched or searched. Extraction includes
+ordinary text/code/CSV/JSON/HTML, PDFs, DOCX headers/footers/footnotes/endnotes/
+comments, and PPTX speaker notes. Diagrams and scanned text may still be absent.
 
-Canvas requires authentication. There are two options:
+## Development
 
-### Option A: Auto-fetch from browser (easiest)
+Install both requirement sets before the full suite:
 
-Just log into Canvas in your browser, then use the `--browser` flag. The tool reads cookies directly from your browser -- no extensions or extra steps needed.
-
-```bash
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
+```sh
+.venv-mcp/bin/python -m pip install -r requirements.txt -r requirements-mcp.txt
+.venv-mcp/bin/python -m unittest discover -v
 ```
 
-**Supported browsers:** chrome, firefox, opera, edge, chromium, brave, vivaldi, safari
-
-> You may need to close the browser first -- some browsers lock their cookie database while running.
-
-### Option B: Export a cookies file
-
-If auto-fetch doesn't work for your setup, you can export cookies manually:
-
-1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome) or a similar extension
-2. Log into your Canvas site
-3. Click the extension icon on the Canvas page and export cookies
-4. Save as `cookies.txt`
-
-```bash
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt
-```
-
-## Usage
-
-### CLI
-
-```bash
-# Auto-fetch cookies from browser
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox
-
-# Using a cookies file
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --cookies cookies.txt
-
-# Custom output directory
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser chrome --output ./my-course
-
-# Re-download over a previous run instead of piling up file_1, file_2, ...
-python canvas_downloader.py --url "https://canvas.example.edu/courses/12345" --browser firefox --overwrite
-```
-
-### Web UI
-
-```bash
-python app.py
-```
-
-Open http://localhost:5000 in your browser. Paste the course URL, pick your browser (or upload a cookies file), and hit Download. Everything gets packaged into a ZIP.
-
-## Output Structure
-
-```
-downloads/
-  Course Name/
-    Module 1/
-      lecture-slides.pdf
-      reading-list.txt
-      assignment.docx
-    Module 2/
-      lab-instructions.pdf
-      ...
-    links.txt
-```
-
-- **Files** are downloaded with their original names
-- **Canvas pages** are saved as `.txt` files
-- **External links** (assignments, quizzes, external tools, plus any off-site
-  links referenced inside page bodies) are collected in `links.txt`
-- **Re-running** appends `_1`, `_2`, ... to existing filenames; pass `--overwrite`/`-w`
-  to replace them instead
-
-## Requirements
-
-- Python 3.10+
-- An active Canvas LMS session (you must be logged in)
-
-## Troubleshooting
-
-**"Authentication failed (HTTP 401/403)"**
-Your cookies have expired. Log into Canvas again and re-export your cookies.
-
-**"No modules found"**
-The course may be empty, unpublished, or you may not have access.
-
-**`browser_cookie3` errors with `--browser`**
-Some browsers lock their cookie databases while running. Try closing the browser first, or use the `--cookies` file method instead.
-
-## Using as a Context Bank for Claude Code
-
-For ChatGPT or Claude **web** access from your Mac, see
-[Mac connector setup](MAC_CONNECTOR_SETUP.md). The MCP server searches and reads
-your archive, lets you include/hide courses, and requests incremental background
-syncs. Account/tunnel setup is required separately.
-
-Once you've downloaded a course, you can point Claude Code at the materials:
-
-```bash
-# From your assignment/project directory, reference the downloaded course
-claude "Using the course materials in ~/downloads/Intro_to_CS/ as context, help me with this assignment"
-```
-
-Or add the course path to your project's `CLAUDE.md`:
-
-```markdown
-# Course Context
-Course materials are in ~/downloads/Course_Name/
-Reference these for assignment help, studying, and review.
-```
-
-The module-based folder structure makes it easy to reference specific topics:
-
-```
-downloads/Intro_to_CS/
-  Module_1_Fundamentals/
-  Module_2_Data_Structures/
-  Module_3_Algorithms/
-  links.txt
-```
+There is no `lxml` dependency or frontend build step. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the source map and verification
+boundaries.
 
 ## License
 

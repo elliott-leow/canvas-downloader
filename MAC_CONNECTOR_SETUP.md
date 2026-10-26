@@ -257,26 +257,16 @@ permissions. Course content reaches ChatGPT/Claude only when its tools retrieve 
   `status`, and `uninstall` login-service commands are macOS-only. Linux users can
   supervise the foreground commands with their own service manager.
 
-Sync archives accessible Canvas files, page text, assignment descriptions, syllabi,
-module outlines, announcements, and discussion content. Announcements and discussions
-are saved in their own folders with topic bodies, authors, timestamps, source URLs,
-nested reply relationships, and available group-specific threads. The sync checks
-fresh replies on each run, including entries newer than Canvas's cached thread view.
-Canvas post-first and group-access restrictions are respected; unavailable replies
-are labeled, and temporary failures preserve the last complete thread. Attachment
-links are recorded; attachments are also available when the ordinary file sync can
-retrieve them. Unchanged file timestamps and text hashes avoid repeated
-writes. Downloads replace files atomically. Deleted/renamed remote items do not
-remove old local copies. External websites, submissions, and quiz
-question bodies are not synchronized. Media files may download as Canvas files,
-but the assistant reads only TXT, Markdown, PDF, DOCX, and PPTX; diagrams, images,
-and scanned text are not extracted. Extraction excludes files over 25 MB and caps
-text at one million characters.
+Sync and ZIP coverage, optional personal/group exports, preservation rules, and
+assistant extraction limits are documented in the
+[README](README.md#archive-contents-and-coverage). The connector keeps its nine
+tools. Unsupported and oversized files appear in inventory with a reason;
+diagrams and scanned text are not extracted. No tools modify Canvas.
 
 ### Developer checks
 
 ```sh
-uv pip install --python .venv-mcp/bin/python -r requirements-mcp.txt
+uv pip install --python .venv-mcp/bin/python -r requirements.txt -r requirements-mcp.txt
 .venv-mcp/bin/python -m unittest discover -v
 ```
 

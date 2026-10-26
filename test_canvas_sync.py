@@ -24,6 +24,7 @@ class SyncTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.session = Mock()
+        self.session._canvas_owner = {'id': 99}
         self.sync = Sync(self.session, "https://canvas.example", self.root)
 
     def test_pagination_and_host_boundary(self):

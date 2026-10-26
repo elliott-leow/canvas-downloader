@@ -1,260 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canvas Course Downloader</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #f5f5f5;
-            color: #333;
-            line-height: 1.6;
-        }
-        .container {
-            max-width: 640px;
-            margin: 40px auto;
-            padding: 0 20px;
-        }
-        h1 {
-            font-size: 1.5rem;
-            margin-bottom: 8px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 32px;
-        }
-        .card {
-            background: #fff;
-            border-radius: 8px;
-            padding: 24px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 24px;
-        }
-label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 6px;
-            font-size: 0.9rem;
-        }
-        input[type="url"], input[type="file"] {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            margin-bottom: 16px;
-        }
-        input[type="url"]:focus {
-            outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
-        }
-        input[type="file"] {
-            padding: 8px;
-            cursor: pointer;
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            background: #2563eb;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-        button:hover { background: #1d4ed8; }
-        .error {
-            background: #fef2f2;
-            color: #991b1b;
-            border: 1px solid #fecaca;
-            padding: 12px 16px;
-            border-radius: 6px;
-            margin-bottom: 16px;
-            font-size: 0.9rem;
-        }
-        .results {
-            font-size: 0.9rem;
-        }
-        .results h2 {
-            font-size: 1.1rem;
-            margin-bottom: 12px;
-        }
-        .results .section {
-            margin-bottom: 12px;
-        }
-        .results .section-title {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        .results ul {
-            padding-left: 20px;
-        }
-        .results li { margin-bottom: 2px; }
-        .ok { color: #15803d; }
-        .fail { color: #991b1b; }
-        .download-btn {
-            display: inline-block;
-            margin-top: 16px;
-            padding: 10px 24px;
-            background: #16a34a;
-            color: #fff;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: 600;
-            width: auto;
-        }
-        .download-btn:hover { background: #15803d; }
-        .auth-tabs {
-            display: flex;
-            gap: 0;
-            margin-bottom: 16px;
-            border-radius: 6px;
-            overflow: hidden;
-            border: 1px solid #d1d5db;
-        }
-        .auth-tabs .tab {
-            flex: 1;
-            padding: 8px 12px;
-            background: #f9fafb;
-            color: #374151;
-            border: none;
-            border-radius: 0;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            width: auto;
-        }
-        .auth-tabs .tab.active {
-            background: #2563eb;
-            color: #fff;
-        }
-        .auth-tabs .tab:hover:not(.active) { background: #e5e7eb; }
-        select {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            margin-bottom: 8px;
-            background: #fff;
-        }
-        select:focus {
-            outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
-        }
-        .hint {
-            font-size: 0.8rem;
-            color: #6b7280;
-            margin-bottom: 16px;
-        }
-        .hint a { color: #2563eb; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% if result %}Archive ready · {% endif %}Canvas Course Downloader</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
 <body>
-    <div class="container">
-        <h1>Canvas Course Downloader</h1>
-        <p class="subtitle">Back up all files and content from a Canvas LMS course.</p>
-
-        {% if results %}
-        <div class="card results">
-            <h2>{{ results.page_title }}</h2>
-
-            {% if results.has_main_page %}
-            <div class="section">
-                <span class="section-title">Page text:</span> <span class="ok">saved</span>
-            </div>
-            {% endif %}
-
-            {% if results.files_ok %}
-            <div class="section">
-                <div class="section-title">Files downloaded ({{ results.files_ok|length }}):</div>
-                <ul>{% for f in results.files_ok %}<li class="ok">{{ f }}</li>{% endfor %}</ul>
-            </div>
-            {% endif %}
-
-            {% if results.files_fail %}
-            <div class="section">
-                <div class="section-title">Files failed ({{ results.files_fail|length }}):</div>
-                <ul>{% for f in results.files_fail %}<li class="fail">{{ f }}</li>{% endfor %}</ul>
-            </div>
-            {% endif %}
-
-            {% if results.pages_ok %}
-            <div class="section">
-                <div class="section-title">Canvas pages saved ({{ results.pages_ok|length }}):</div>
-                <ul>{% for p in results.pages_ok %}<li class="ok">{{ p }}</li>{% endfor %}</ul>
-            </div>
-            {% endif %}
-
-            {% if results.pages_fail %}
-            <div class="section">
-                <div class="section-title">Pages failed ({{ results.pages_fail|length }}):</div>
-                <ul>{% for p in results.pages_fail %}<li class="fail">{{ p }}</li>{% endfor %}</ul>
-            </div>
-            {% endif %}
-
-            {% if results.external_links %}
-            <div class="section">
-                <div class="section-title">External links ({{ results.external_links|length }}):</div>
-                <span>Saved to links.txt in the zip.</span>
-            </div>
-            {% endif %}
-
-            <a href="{{ url_for('download_zip', dir=tmpdir) }}" class="download-btn">Download ZIP</a>
-        </div>
-        {% endif %}
-
-        {% if error %}
-        <div class="error">{{ error }}</div>
-        {% endif %}
-
-        <div class="card">
-            <form method="post" enctype="multipart/form-data">
-                <label for="url">Canvas Course URL</label>
-                <input type="url" id="url" name="url" placeholder="https://canvas.example.edu/courses/12345" value="{{ url or '' }}" required>
-
-                <label>Authentication</label>
-                <div class="auth-tabs">
-                    <button type="button" class="tab active" onclick="switchAuth('browser')">Auto from browser</button>
-                    <button type="button" class="tab" onclick="switchAuth('file')">Upload cookies file</button>
-                </div>
-                <input type="hidden" name="auth_method" id="auth_method" value="browser">
-
-                <div id="auth-browser" class="auth-section">
-                    <label for="browser">Browser</label>
-                    <select id="browser" name="browser">
-                        {% for b in browsers or [] %}
-                        <option value="{{ b }}">{{ b|capitalize }}</option>
-                        {% endfor %}
-                    </select>
-                    <p class="hint">Log into Canvas in your browser first. You may need to close it before downloading.</p>
-                </div>
-
-                <div id="auth-file" class="auth-section" style="display:none;">
-                    <label for="cookies">Cookies File</label>
-                    <input type="file" id="cookies" name="cookies" accept=".txt">
-                    <p class="hint">Export cookies with <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank">Get cookies.txt LOCALLY</a> or a similar extension.</p>
-                </div>
-
-                <button type="submit">Download Course</button>
-            </form>
-        </div>
-
-        <script>
-        function switchAuth(method) {
-            document.getElementById('auth_method').value = method;
-            document.getElementById('auth-browser').style.display = method === 'browser' ? '' : 'none';
-            document.getElementById('auth-file').style.display = method === 'file' ? '' : 'none';
-            document.querySelectorAll('.auth-tabs .tab').forEach(function(t) {
-                t.classList.toggle('active', t.textContent.toLowerCase().includes(method === 'browser' ? 'auto' : 'upload'));
-            });
-        }
-        </script>
+  <main class="container">
+    <header class="masthead">
+      <span class="eyebrow">Canvas / Local archive</span>
+      <span class="local-label">Runs on your computer</span>
+    </header>
+    <div class="intro">
+      <h1>Your course.<br>Saved for later.</h1>
+      <p>Save accessible course files, pages, assignments, discussions, and announcements in one organized ZIP.</p>
     </div>
+
+    {% if error %}
+    <div class="notice error" role="alert"><strong>Unable to finish</strong><p>{{ error }}</p></div>
+    {% endif %}
+
+    {% if result %}
+    <section class="card results" aria-labelledby="result-title">
+      <span class="eyebrow {{ 'warning-text' if result.partial else 'success-text' }}">{{ 'Archive partially complete' if result.partial else 'Archive ready' }}</span>
+      <h2 id="result-title">{{ course_title }}</h2>
+      <dl class="stats">
+        <div><dd>{{ result.files_ok }}</dd><dt>Files saved</dt></div>
+        <div><dd>{{ result.pages_ok }}</dd><dt>Text records saved</dt></div>
+        <div><dd>{{ result.links|length }}</dd><dt>Links collected</dt></div>
+      </dl>
+      {% if result.partial %}
+      <div class="notice warning" role="status">
+        <strong>Some content could not be saved.</strong>
+        <p>{{ result.files_fail }} files failed · {{ result.pages_fail }} pages failed · {{ result.module_errors|length }} modules unavailable.</p>
+        {% if result.content_errors %}<details><summary>Unavailable course content ({{ result.content_errors|length }})</summary><ul>{% for item in result.content_errors %}<li>{{ item.item }}: {{ item.error }}</li>{% endfor %}</ul></details>{% endif %}
+        {% if result.items_skipped %}<p>{{ result.items_skipped }} unsupported module items were recorded as references.</p>{% endif %}
+        {% if result.module_errors %}<details><summary>Unavailable modules</summary><ul>{% for name in result.module_errors %}<li>{{ name }}</li>{% endfor %}</ul></details>{% endif %}
+        <p>Retry the failed items after checking your Canvas access. Anything already saved will be kept.</p>
+      </div>
+      {% endif %}
+      {% if result.skipped_locked %}<p class="hint">{{ result.skipped_locked }} locked items were unavailable to your account. See archive-status.json for coverage.</p>{% endif %}
+      {% if result.unavailable_sources %}<details class="hint"><summary>Optional sources unavailable ({{ result.unavailable_sources|length }})</summary><ul>{% for item in result.unavailable_sources %}<li>{{ item.source }}: {{ item.reason }}</li>{% endfor %}</ul></details>{% endif %}
+      {% if has_content|default(true) %}
+      <a class="button" href="{{ url_for('download_zip', id=download_id) }}">Download ZIP <span aria-hidden="true">↓</span></a>
+      <p class="hint">Available for {{ expiry_minutes }} minutes while this app is running. Links are saved in links.txt.</p>
+      {% endif %}
+      {% if result.pending %}
+      <form method="post" enctype="multipart/form-data" class="retry-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="retry_id" value="{{ download_id }}">
+        <input type="hidden" name="auth_method" value="{{ retry_method }}">
+        <input type="hidden" name="browser" value="{{ retry_browser }}">
+        {% if retry_method == 'file' %}
+        <label for="retry-cookies">Cookies file for retry</label>
+        <input type="file" id="retry-cookies" name="cookies" accept=".txt" required>
+        {% endif %}
+        <button type="submit" class="button">Retry failed items ({{ result.pending|length }})</button>
+        <p class="hint" role="status">Only failed items will be requested. Retry is available until this archive expires.</p>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="card" aria-labelledby="form-title">
+      <h2 id="form-title">{{ 'Archive another course' if result else 'Create a course archive' }}</h2>
+      <form method="post" enctype="multipart/form-data" id="download-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field-group">
+          <label class="step-label" for="url"><span class="step" aria-hidden="true">1</span>Course URL</label>
+          <input type="url" id="url" name="url" placeholder="https://canvas.example.edu/courses/12345" value="{{ url or '' }}" required aria-describedby="url-hint" autocomplete="url">
+          <p class="hint" id="url-hint">Open your course in Canvas and copy its address.</p>
+        </div>
+        <fieldset class="field-group">
+          <legend class="step-label"><span class="step" aria-hidden="true">2</span>Connect your Canvas session</legend>
+          <div class="auth-options">
+            <label class="auth-option"><input type="radio" name="auth_method" value="browser" {{ 'checked' if auth_method != 'file' else '' }}><span>Use a browser<small>Read your signed-in session</small></span></label>
+            <label class="auth-option"><input type="radio" name="auth_method" value="file" {{ 'checked' if auth_method == 'file' else '' }}><span>Upload cookies<small>Use a cookies.txt export</small></span></label>
+          </div>
+          <div id="auth-browser" class="auth-panel">
+            <label for="browser">Browser</label>
+            <select id="browser" name="browser" aria-describedby="browser-hint">
+              {% for item in browsers %}<option value="{{ item }}" {{ 'selected' if browser == item else '' }}>{{ item|capitalize }}</option>{% endfor %}
+            </select>
+            <p class="hint" id="browser-hint">Sign into Canvas in this browser first. If cookies cannot be read, close the browser and try again.</p>
+          </div>
+          <div id="auth-file" class="auth-panel">
+            <label for="cookies">Cookies file</label>
+            <input type="file" id="cookies" name="cookies" accept=".txt" aria-describedby="cookies-hint">
+            <p class="hint" id="cookies-hint">Upload a Netscape-format cookies.txt file, up to 2 MB. The uploaded file is removed after reading.</p>
+          </div>
+        </fieldset>
+        <details class="field-group"><summary>Additional course material</summary>
+          <label><input type="checkbox" name="include_personal"> Include my submissions, grades, and feedback</label><br>
+          <label><input type="checkbox" name="include_groups"> Include files and pages from my groups</label>
+        </details>
+        <button class="button" type="submit" id="submit-button"><span id="submit-label">Create archive</span><span aria-hidden="true">→</span></button>
+        <p id="progress" class="hint progress" role="status" aria-live="polite" hidden>Downloading course materials and building your ZIP. Large courses can take a few minutes. Keep this tab open.</p>
+        <noscript><p class="hint">Choose an authentication method above. Only the selected method will be used.</p></noscript>
+      </form>
+    </section>
+    <footer>Files stay organized by module. This tool reads Canvas content without changing your course.</footer>
+  </main>
 </body>
 </html>

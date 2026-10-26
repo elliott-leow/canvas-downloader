@@ -18,6 +18,7 @@ from urllib.request import urlopen
 from cryptography.fernet import Fernet
 
 from canvas_downloader import SUPPORTED_BROWSERS
+from archive_io import trim_connector_logs
 from connector_config import CONFIG, PROJECT, SECRETS, https_origin, load_config, private_json
 
 
@@ -39,6 +40,9 @@ def configure(args):
     if auth not in ("github", "token"):
         raise ValueError("Choose github or token")
     config.update(canvas_url=canvas_url, browser=browser, auth=auth, port=args.port or config["port"])
+    for option in ('include_personal', 'include_groups'):
+        if getattr(args, option, None) is not None:
+            config[option] = getattr(args, option)
     if args.public_url:
         config["public_url"] = https_origin(args.public_url)
     private_json(CONFIG, config)
@@ -174,7 +178,11 @@ def quick(config):
         print("New quick tunnel URLs require updating the GitHub callback URL and re-adding the connector.")
         next_sync = 0
         sync = None
+        next_trim = 0
         while tunnel.poll() is None and server.poll() is None:
+            if time.monotonic() >= next_trim:
+                trim_connector_logs(PROJECT)
+                next_trim = time.monotonic() + 30
             if time.monotonic() >= next_sync and (sync is None or sync.poll() is not None):
                 sync_log = (directory / "sync.log").open("a")
                 try:
@@ -182,6 +190,7 @@ def quick(config):
                                             stdout=sync_log, stderr=sync_log)
                 finally:
                     sync_log.close()
+                processes = [process for process in processes if process.poll() is None]
                 processes.append(sync)
                 next_sync = time.monotonic() + config["interval"]
             time.sleep(1)
@@ -210,13 +219,15 @@ def main():
     parser.add_argument("--auth", choices=["github", "token"])
     parser.add_argument("--public-url")
     parser.add_argument("--port", type=int)
+    parser.add_argument('--include-personal', action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument('--include-groups', action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
     if args.port is not None and not 1024 <= args.port <= 65535:
         parser.error("Choose a port between 1024 and 65535")
     try:
         config = load_config()
         if args.action == "configure" or not config.get("canvas_url") or any(
-                [args.canvas_url, args.browser, args.auth, args.public_url, args.port]):
+                [args.canvas_url, args.browser, args.auth, args.public_url, args.port]) or args.include_personal is not None or args.include_groups is not None:
             config = configure(args)
         if args.action == "quick":
             quick(config)

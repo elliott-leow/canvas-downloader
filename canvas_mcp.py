@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict, Counter
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,8 @@ import secrets
 import threading
 import xml.etree.ElementTree as ET
 import zipfile
+from html.parser import HTMLParser
+from posixpath import dirname, normpath
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
@@ -17,9 +20,41 @@ from pypdf import PdfReader
 from connector_config import load_config
 
 PROJECT = Path(__file__).resolve().parent
-EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".pptx"}
+OFFICE_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".rst", ".csv", ".tsv", ".json", ".jsonl", ".html", ".htm",
+    ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".log", ".py", ".js", ".ts",
+    ".tsx", ".jsx", ".css", ".scss", ".sh", ".zsh", ".bash", ".c", ".h", ".cc",
+    ".cpp", ".java", ".go", ".rs", ".rb", ".swift", ".sql", ".r", ".tex",
+}
+EXTENSIONS = OFFICE_EXTENSIONS | TEXT_EXTENSIONS
 MAX_BYTES = 25 * 1024 * 1024
 MAX_CHARS = 1_000_000
+MAX_CACHE_CHARS = 8_000_000
+MAX_CACHE_ENTRIES = 128
+
+
+class _HTMLText(HTMLParser):
+    """Collect visible-ish HTML text without executing or retaining scripts."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._ignored = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag.casefold() in {"script", "style", "template"}:
+            self._ignored += 1
+
+    def handle_endtag(self, tag):
+        if tag.casefold() in {"script", "style", "template"} and self._ignored:
+            self._ignored -= 1
+
+    def handle_data(self, data):
+        if not self._ignored:
+            self.parts.append(data)
+
+    def text(self):
+        return " ".join(" ".join(self.parts).split())
 
 
 class Archive:
@@ -27,15 +62,19 @@ class Archive:
         self.root = root.resolve()
         if not self.root.is_dir():
             raise ValueError("Archive folder does not exist")
-        self.cache = {}
+        self.cache = OrderedDict()
+        self.cache_chars = 0
         self.lock = threading.Lock()
 
     def resolve(self, file_id: str) -> Path:
+        return self._resolve(file_id, self.hidden_folders())
+
+    def _resolve(self, file_id: str, hidden: set[str]) -> Path:
         relative = Path(file_id)
         if relative.is_absolute() or any(p.startswith(".") for p in relative.parts):
             raise ValueError("Use a relative file ID returned by list_files or search")
         candidate = self.root / relative
-        if relative.parts and relative.parts[0] in self.hidden_folders():
+        if relative.parts and relative.parts[0] in hidden:
             raise ValueError("This course is hidden from the connector")
         if any(p.is_symlink() for p in [candidate, *candidate.parents] if p != self.root):
             raise ValueError("Symlinks are excluded")
@@ -52,23 +91,78 @@ class Archive:
         from canvas_sync import course_catalog
         return {c["folder"] for c in course_catalog(self.root)["courses"] if c["hidden"]}
 
-    def files(self, course: str = "") -> list[str]:
-        results = []
-        hidden = self.hidden_folders()
-        for path in self.root.rglob("*"):
-            if path.suffix.lower() not in EXTENSIONS or not path.is_file():
+    def _safe_path(self, path: Path, hidden: set[str]) -> Path | None:
+        """Return a safe archived file, or None for hidden/outside/symlinked paths."""
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError:
+            return None
+        if not relative.parts or any(part.startswith(".") for part in relative.parts):
+            return None
+        if relative.parts[0] in hidden or not path.is_file():
+            return None
+        if any(part.is_symlink() for part in [path, *path.parents] if part != self.root):
+            return None
+        resolved = path.resolve()
+        return resolved if resolved.is_relative_to(self.root) else None
+
+    def _state_by_path(self) -> dict[str, dict]:
+        """Read optional sync metadata without making old archives invalid."""
+        state_path = self.root / ".sync-state.json"
+        if not state_path.is_file() or state_path.is_symlink():
+            return {}
+        try:
+            items = json.loads(state_path.read_text(encoding="utf-8")).get("items", {})
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            return {}
+        if not isinstance(items, dict):
+            return {}
+        return {Path(str(value["path"]).replace("\\", "/")).as_posix(): value
+                for value in items.values()
+                if isinstance(value, dict) and isinstance(value.get("path"), str)}
+
+    def inventory(self, course: str = "") -> list[dict]:
+        """All safe saved files, including ones that intentionally cannot be extracted."""
+        hidden, state = self.hidden_folders(), self._state_by_path()
+        rows = []
+        for candidate in self.root.rglob("*"):
+            path = self._safe_path(candidate, hidden)
+            if path is None:
                 continue
             file_id = path.relative_to(self.root).as_posix()
-            if file_id.split("/")[0] in hidden:
-                continue
             if course and course.casefold() not in file_id.split("/")[0].casefold():
                 continue
-            try:
-                self.resolve(file_id)
-                results.append(file_id)
-            except ValueError:
-                continue
-        return sorted(results)
+            suffix, size = path.suffix.lower(), path.stat().st_size
+            reason = None
+            if suffix not in EXTENSIONS:
+                reason = "unsupported_format"
+            elif size > MAX_BYTES:
+                reason = "exceeds_25_mib_limit"
+            record = state.get(file_id, {})
+            with self.lock:
+                cached = file_id in self.cache
+            rows.append({"id": file_id, "format": suffix.lstrip("."), "size_bytes": size,
+                         "readable": reason is None, "reason": reason, "cached": cached,
+                         # Pre-metadata archives remain readable/discoverable; a false value
+                         # explicitly means Canvas no longer made this item available.
+                         "available": record.get("available", True),
+                         "last_seen": record.get("last_seen"), 'companion_of': record.get('companion_of')})
+        return sorted(rows, key=lambda row: row["id"])
+
+    def files(self, course: str = "") -> list[str]:
+        # Keep the long-standing readable-only contract for callers such as search.
+        return [row["id"] for row in self.inventory(course) if row["readable"]]
+
+    @staticmethod
+    def _paragraphs(xml: bytes) -> list[str]:
+        root = ET.fromstring(xml)
+        return [" ".join(piece.text or "" for piece in paragraph.iter()
+                         if piece.tag.endswith("}t"))
+                for paragraph in root.iter() if paragraph.tag.endswith("}p")]
+
+    @staticmethod
+    def _related_part(source: str, target: str) -> str:
+        return normpath(f"{dirname(source)}/{target}").lstrip("/")
 
     def text(self, file_id: str) -> str:
         # Recheck containment even for cached entries.
@@ -77,6 +171,7 @@ class Archive:
         stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
         with self.lock:
             if file_id in self.cache and self.cache[file_id][0] == stamp:
+                self.cache.move_to_end(file_id)
                 return self.cache[file_id][1]
         if path.suffix.lower() == ".pdf":
             parts = []
@@ -90,33 +185,75 @@ class Archive:
             content = "".join(parts)
         elif path.suffix.lower() in {".docx", ".pptx"}:
             with zipfile.ZipFile(path) as document:
-                names = (["word/document.xml"] if path.suffix.lower() == ".docx" else
-                         sorted((n for n in document.namelist()
-                                 if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
-                                key=lambda n: int(re.search(r"slide(\d+)", n).group(1))))
                 parts = []
                 size = 0
-                for number, name in enumerate(names, 1):
-                    if document.getinfo(name).file_size > MAX_BYTES:
-                        raise ValueError("Document XML exceeds extraction limit")
-                    xml = ET.fromstring(document.read(name))
-                    paragraphs = [" ".join(e.text or "" for e in p.iter()
-                                           if e.tag.endswith("}t"))
-                                  for p in xml.iter() if p.tag.endswith("}p")]
-                    part = "\n".join(paragraphs)
-                    if path.suffix.lower() == ".pptx":
-                        part = f"[Slide {number}]\n{part}"
+                xml_bytes = 0
+                def read_part(name):
+                    nonlocal xml_bytes
+                    xml_bytes += document.getinfo(name).file_size
+                    if xml_bytes > MAX_BYTES:
+                        raise ValueError('Document XML exceeds extraction limit')
+                    return document.read(name)
+                def append_part(part):
+                    nonlocal size
+                    part = part[:max(0, MAX_CHARS + 1 - size)]
                     parts.append(part)
                     size += len(part)
-                    if size > MAX_CHARS:
-                        break
+                    return size > MAX_CHARS
+                if path.suffix.lower() == ".docx":
+                    names = [name for name in ["word/document.xml", "word/header1.xml", "word/footer1.xml"]
+                             if name in document.namelist()]
+                    # Headers/footers can have arbitrary numbering; include all extra prose parts.
+                    names = sorted({*names, *(name for name in document.namelist()
+                                               if re.fullmatch(r"word/(header|footer)\d+\.xml|word/(footnotes|endnotes|comments)\.xml", name))})
+                    for name in names:
+                        if document.getinfo(name).file_size > MAX_BYTES:
+                            raise ValueError("Document XML exceeds extraction limit")
+                        label = {"word/document.xml": "Document", "word/footnotes.xml": "Footnotes",
+                                 "word/endnotes.xml": "Endnotes", "word/comments.xml": "Comments"}.get(name)
+                        part = "\n".join(self._paragraphs(read_part(name)))
+                        if append_part(f"[{label}]\n{part}" if label else part):
+                            break
+                else:
+                    names = sorted((n for n in document.namelist()
+                                    if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
+                                   key=lambda n: int(re.search(r"slide(\d+)", n).group(1)))
+                    for number, name in enumerate(names, 1):
+                        if document.getinfo(name).file_size > MAX_BYTES:
+                            raise ValueError("Document XML exceeds extraction limit")
+                        part = "\n".join(self._paragraphs(read_part(name)))
+                        rel_name = f"ppt/slides/_rels/{Path(name).name}.rels"
+                        notes = []
+                        if rel_name in document.namelist():
+                            relationships = ET.fromstring(read_part(rel_name))
+                            for relation in relationships:
+                                if relation.attrib.get("Type", "").endswith("/notesSlide"):
+                                    note_name = self._related_part(name, relation.attrib.get("Target", ""))
+                                    if note_name in document.namelist():
+                                        notes.extend(self._paragraphs(read_part(note_name)))
+                        if notes:
+                            part += "\n[Speaker notes]\n" + "\n".join(notes)
+                        if append_part(f"[Slide {number}]\n{part}"):
+                            break
                 content = "\n".join(parts)
         else:
             content = path.read_text(encoding="utf-8", errors="replace")
+            if path.suffix.lower() in {".html", ".htm"}:
+                parser = _HTMLText()
+                parser.feed(content)
+                parser.close()
+                content = parser.text()
         if len(content) > MAX_CHARS:
             content = content[:MAX_CHARS] + "\n[Extraction truncated at 1,000,000 characters]"
         with self.lock:
+            previous = self.cache.pop(file_id, None)
+            if previous:
+                self.cache_chars -= len(previous[1])
             self.cache[file_id] = (stamp, content)
+            self.cache_chars += len(content)
+            while self.cache_chars > MAX_CACHE_CHARS or len(self.cache) > MAX_CACHE_ENTRIES:
+                _, (_, evicted) = self.cache.popitem(last=False)
+                self.cache_chars -= len(evicted)
         return content
 
     def search(self, query: str, course: str = "", limit: int = 10) -> dict:
@@ -124,23 +261,30 @@ class Archive:
         if not terms:
             raise ValueError("Enter at least one search word")
         results, errors = [], []
-        for file_id in self.files(course):
+        for row in self.inventory(course):
+            if not row['readable'] or row.get('companion_of'):
+                continue
+            file_id = row['id']
             try:
                 content = self.text(file_id)
             except Exception:
                 errors.append({"id": file_id, "error": "Text extraction failed; inspect original file"})
                 continue
             lowered = content.casefold()
-            score = sum(min(lowered.count(term), 20) +
-                        10 * (term in file_id.casefold()) for term in terms)
+            words = Counter(re.findall(r"\w+", lowered))
+            filename_words = Counter(re.findall(r"\w+", Path(file_id).stem.casefold().replace('_', ' ')))
+            score = sum(min(words[term], 20) + 10 * filename_words[term]
+                        for term in terms)
             if score:
-                positions = [lowered.find(term) for term in terms if term in lowered]
+                matches = [re.search(rf"(?<!\w){re.escape(term)}(?!\w)", lowered) for term in terms]
+                positions = [match.start() for match in matches if match]
                 start = max(0, min(positions) - 150) if positions else 0
                 results.append({"id": file_id, "title": Path(file_id).name,
+                                'available': row['available'], 'last_seen': row['last_seen'],
                                 "score": score, "snippet": content[start:start + 900]})
         results.sort(key=lambda item: (-item["score"], item["id"]))
         return {"results": results[:max(1, min(limit, 30))], "extraction_errors": errors,
-                "note": "Search covers extracted text and filenames. Diagrams and scanned text may be missing."}
+                "note": "Search is word-based over extracted text and filename words only. Diagrams, scanned text, and unsupported or oversized files are not searched."}
 
 
 def build_server(archive: Archive, auth=None) -> FastMCP:
@@ -203,10 +347,14 @@ def build_server(archive: Archive, auth=None) -> FastMCP:
 
     @server.tool(annotations=annotations)
     def list_files(course: str = "", offset: int = 0, limit: int = 100) -> dict:
-        """List file IDs, optionally filtering by part of a course folder name."""
-        files = archive.files(course)
+        """List readable file IDs plus a bounded inventory, optionally filtering by course folder."""
+        inventory = archive.inventory(course)
+        files = [row['id'] for row in inventory if row['readable']]
         start = max(0, offset)
-        return {"total": len(files), "files": files[start:start + max(1, min(limit, 200))]}
+        page_size = max(1, min(limit, 200))
+        return {"total": len(files), "files": files[start:start + page_size],
+                "inventory_total": len(inventory), "inventory": inventory[start:start + page_size],
+                "note": "Inventory includes saved unsupported or oversized files; fetch and search are text-only."}
 
     @server.tool(annotations=annotations)
     def search(query: str, course: str = "", limit: int = 10) -> dict:
@@ -219,7 +367,10 @@ def build_server(archive: Archive, auth=None) -> FastMCP:
         content = archive.text(id)
         start = max(0, offset)
         end = min(len(content), start + max(1, min(max_chars, 50000)))
+        metadata = archive._state_by_path().get(id, {})
         return {"id": id, "text": content[start:end], "total_chars": len(content),
+                'available': metadata.get('available', True),
+                'last_seen': metadata.get('last_seen'),
                 "next_offset": end if end < len(content) else None,
                 "note": "Extracted text only; diagrams/scanned pages may be missing."}
 

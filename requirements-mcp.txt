@@ -1,5 +1,4 @@
+# Connector installation: CLI, sync and MCP (Python 3.11+)
+-r requirements-core.txt
 fastmcp==2.14.7
 pypdf==6.20.0
-requests>=2.28,<3
-beautifulsoup4>=4.11,<5
-browser_cookie3>=0.19,<1

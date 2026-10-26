@@ -1,0 +1,4 @@
+# CLI and background sync (Python 3.10+; sync needs POSIX)
+requests>=2.28,<3
+beautifulsoup4>=4.11,<5
+browser_cookie3>=0.19,<1

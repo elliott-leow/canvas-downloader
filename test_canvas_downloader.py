@@ -120,7 +120,8 @@ class ProcessPageLinkSplit(unittest.TestCase):
         class S:
             def get(self, url, **kw): return R()
 
-        return process_page(S(), BASE, "1", "week-1", tempfile.mkdtemp())
+        with tempfile.TemporaryDirectory() as directory:
+            return process_page(S(), BASE, "1", "week-1", directory)
 
     def test_canvas_files_become_downloads(self):
         ok, _, embedded, _ = self._run()
