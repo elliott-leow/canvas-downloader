@@ -265,6 +265,38 @@ class CompletenessTests(unittest.TestCase):
         self.assertFalse(sync.failed, sync.status['errors'])
         self.assertEqual([p.read_bytes() for p in self.root.rglob('story.pdf')], [canvas.payloads['6']])
 
+    def test_anonymous_discussion_replies_come_from_graphql(self):
+        canvas = self.canvas
+        canvas.errors[BASE + '/api/v1/courses/1/discussion_topics/21/view'] = 404
+        canvas.errors[BASE + '/api/v1/courses/1/discussion_topics/22/view'] = 404
+        canvas.cookies.set('_csrf_token', 'tok%2B1', domain='canvas.example')
+        posts = []
+
+        def post(url, json=None, headers=None, **kwargs):
+            posts.append(json['variables'])
+            if url != BASE + '/api/graphql' or headers.get('X-CSRF-Token') != 'tok+1':
+                return response({}, url, 422)
+            page = [{'_id': '31', 'parentId': None, 'message': '<p>Is Q9 on the exam?</p>', 'createdAt': '2025-02-01',
+                     'deleted': False, 'author': None, 'anonymousAuthor': {'shortName': '3lw9e'}, 'attachment': None}]
+            if json['variables']['after']:
+                page = [{'_id': '32', 'parentId': '31', 'message': '<p>Yes.</p>', 'createdAt': '2025-02-02', 'deleted': False,
+                         'author': {'shortName': 'Professor'}, 'anonymousAuthor': None, 'attachment': None}]
+            return response({'data': {'legacyNode': {'discussionEntriesConnection': {
+                'pageInfo': {'hasNextPage': not json['variables']['after'], 'endCursor': 'next'}, 'nodes': page}}}}, url)
+        canvas.post = post
+        sync = Sync(canvas, BASE, self.root)
+        anonymous = {'id': 21, 'title': 'Thread', 'message': 'Prompt', 'anonymous_state': 'full_anonymity'}
+        sync.attempt('1', 'discussions:21', lambda: sync.discussion('1', 'Course', anonymous))
+        self.assertFalse(sync.failed, sync.status['errors'])
+        text = (self.root / 'Course/Canvas Sync/Discussions/21-Thread.txt').read_text()
+        self.assertIn('Author: Anonymous 3lw9e', text)
+        self.assertIn('Entry 32 (reply to 31)\nAuthor: Professor', text)
+        self.assertEqual([p['after'] for p in posts], [None, 'next'])
+        # Ordinary topics keep the REST error path and never query GraphQL.
+        sync.attempt('1', 'discussions:22', lambda: sync.discussion('1', 'Course', {'id': 22, 'title': 'Plain', 'message': 'x'}))
+        self.assertIn('1:discussions:22', sync.failed)
+        self.assertEqual(len(posts), 2)
+
     def test_renames_stay_stable_and_local_edits_are_preserved(self):
         sync = Sync(self.canvas, BASE, self.root)
         sync.write_text('1:page:1', 'Course/old.txt', 'old')

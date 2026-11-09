@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import os
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import requests
 from archive_io import atomic_write, DownloadIndex, safe_path, lock_file, trim_connector_logs, course_lock
@@ -20,6 +20,10 @@ from canvas_content import rich_text, references, fidelity_html, offline_html, f
 from connector_config import load_config, https_origin
 
 PROJECT = Path(__file__).resolve().parent
+ANONYMOUS_THREAD = '''query($id: ID!, $after: String) { legacyNode(_id: $id, type: Discussion) { ... on Discussion {
+  discussionEntriesConnection(first: 100, after: $after) { pageInfo { hasNextPage endCursor }
+    nodes { _id parentId message createdAt deleted author { shortName } anonymousAuthor { shortName }
+            attachment { _id displayName url size updatedAt } } } } } }'''
 
 
 class AuthenticationExpired(requests.HTTPError):
@@ -349,8 +353,7 @@ class Sync:
                 lines.append("\nReplies are not visible to your Canvas account; Canvas may require an initial post.")
             else:
                 try:
-                    view = self.get(self.base + context + f"/discussion_topics/{topic_id}/view",
-                                    params={"include_new_entries": 1}).json()
+                    view = self.thread(context, topic_id, topic)
                 except requests.HTTPError as error:
                     if error.response.status_code not in (403, 404):
                         raise  # Transient failures preserve the last complete thread.
@@ -399,6 +402,50 @@ class Sync:
                   '\n'.join(lines), '\n'.join(bodies), text='')
         self.state['items'][key]['complete'] = complete
         return complete or topic.get('user_can_see_posts') is False
+
+    def thread(self, context, topic_id, topic):
+        try:
+            return self.get(self.base + context + f"/discussion_topics/{topic_id}/view",
+                            params={"include_new_entries": 1}).json()
+        except requests.HTTPError as error:
+            # Canvas serves anonymous threads only through GraphQL; their REST view reports 404.
+            if error.response is None or error.response.status_code != 404 or not topic.get('anonymous_state'):
+                raise
+            return self.anonymous_thread(topic_id)
+
+    def anonymous_thread(self, topic_id):
+        """Read an anonymous thread in the REST view shape, keeping Canvas's anonymous author labels."""
+        host = urlparse(self.base).hostname
+        token = next((c.value for c in self.session.cookies if c.name == '_csrf_token'
+                      and host.endswith((c.domain or '').lstrip('.'))), None)
+        if not token:
+            raise ValueError('Canvas session has no CSRF token for GraphQL')
+        view, participants, after = [], {}, None
+        while True:
+            response = self.session.post(self.base + '/api/graphql', timeout=60, headers={'X-CSRF-Token': unquote(token)},
+                                         json={'query': ANONYMOUS_THREAD, 'variables': {'id': topic_id, 'after': after}})
+            if response.status_code == 401:
+                raise AuthenticationExpired("Canvas session expired; sign in again in your configured browser", response=response)
+            response.raise_for_status()
+            data = response.json()
+            node = (data.get('data') or {}).get('legacyNode') if isinstance(data, dict) else None
+            if not node or data.get('errors'):
+                raise ValueError('Canvas GraphQL did not return the discussion')
+            connection = node['discussionEntriesConnection']
+            for entry in connection['nodes']:
+                anonymous = (entry.get('anonymousAuthor') or {}).get('shortName')
+                author = f'Anonymous {anonymous}' if anonymous else (entry.get('author') or {}).get('shortName') or 'Anonymous'
+                participants.setdefault(author, {'id': f'graphql:{author}', 'display_name': author})
+                attachment = entry.get('attachment')
+                view.append({'id': int(entry['_id']), 'parent_id': int(entry['parentId']) if entry.get('parentId') else None,
+                             'user_id': f'graphql:{author}', 'message': entry.get('message'),
+                             'created_at': entry.get('createdAt'), 'deleted': entry.get('deleted'),
+                             'attachment': attachment and {'id': int(attachment['_id']), 'display_name': attachment.get('displayName'),
+                                                           'url': attachment.get('url'), 'size': attachment.get('size'),
+                                                           'updated_at': attachment.get('updatedAt')}})
+            if not connection['pageInfo']['hasNextPage']:
+                return {'view': view, 'participants': list(participants.values())}
+            after = connection['pageInfo']['endCursor']
 
     def attachment(self, course_id, folder, attachment):
         identifier = attachment.get('id') or file_id(attachment.get('url', ''), self.base)
