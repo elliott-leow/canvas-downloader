@@ -240,6 +240,31 @@ class CompletenessTests(unittest.TestCase):
         self.assertFalse(sync.state['items']['1:discussions:21']['available'])
         self.assertTrue(sync.failed)
 
+    def test_classmate_files_in_discussions_use_their_verifier(self):
+        canvas = self.canvas
+        canvas.payloads['6'] = b'%PDF-1.7 story'
+        canvas.files['6'] = {'id': 6, 'display_name': 'story.pdf', 'url': BASE + '/files/6/download',
+                             'size': len(canvas.payloads['6']), 'updated_at': 'v1'}
+        fallback = canvas.get
+
+        def get(url, **kwargs):
+            # Canvas refuses a classmate's file unless the shared link's verifier is presented.
+            if url == BASE + '/api/v1/files/6':
+                if (kwargs.get('params') or {}).get('verifier') != 'abc':
+                    return response({}, url, 403)
+                return response(canvas.files['6'], url)
+            if url.endswith('/discussion_topics/21/view'):
+                return response({'view': [{'id': 30, 'message': '<a href="/users/5/files/6?verifier=abc&wrap=1">story</a>',
+                                           'attachment': dict(canvas.files['6'], url=BASE + '/files/6/download?verifier=abc')}],
+                                 'participants': []}, url)
+            return fallback(url, **kwargs)
+        canvas.get = get
+        sync = Sync(canvas, BASE, self.root)
+        topic = {'id': 21, 'title': 'Thread', 'message': 'Prompt'}
+        sync.attempt('1', 'discussions:21', lambda: sync.discussion('1', 'Course', topic))
+        self.assertFalse(sync.failed, sync.status['errors'])
+        self.assertEqual([p.read_bytes() for p in self.root.rglob('story.pdf')], [canvas.payloads['6']])
+
     def test_renames_stay_stable_and_local_edits_are_preserved(self):
         sync = Sync(self.canvas, BASE, self.root)
         sync.write_text('1:page:1', 'Course/old.txt', 'old')

@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import os
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 from archive_io import atomic_write, DownloadIndex, safe_path, lock_file, trim_connector_logs, course_lock
@@ -36,6 +36,12 @@ def name(value):
 
 def html_text(value):
     return rich_text(value)
+
+
+def file_params(url):
+    """Keep the verifier that lets a viewer read files other users shared in a course."""
+    verifier = parse_qs(urlparse(url or '').query).get('verifier')
+    return {'verifier': verifier[0]} if verifier else None
 
 
 def past_course(course):
@@ -249,8 +255,8 @@ class Sync:
         local = {}
         for url in assets:
             identifier = file_id(url, self.base)
-            def asset(identifier=identifier):
-                info = self.get(f'{self.base}/api/v1/files/{identifier}').json()
+            def asset(identifier=identifier, url=url):
+                info = self.get(f'{self.base}/api/v1/files/{identifier}', params=file_params(url)).json()
                 self.file(course_id, folder, info)
             # Already downloaded assets need no repeated metadata request in this run.
             if self.downloads and f'file:{identifier}' in self.downloads.seen:
@@ -397,7 +403,8 @@ class Sync:
     def attachment(self, course_id, folder, attachment):
         identifier = attachment.get('id') or file_id(attachment.get('url', ''), self.base)
         if identifier:
-            info = self.get(f'{self.base}/api/v1/files/{int(identifier)}').json()
+            info = self.get(f'{self.base}/api/v1/files/{int(identifier)}',
+                            params=file_params(attachment.get('url'))).json()
             return self.file(course_id, folder, info)
         identifier = hashlib.sha256((attachment.get('filename') or attachment.get('url') or '').encode()).hexdigest()[:20]
         if self.downloads is None:
