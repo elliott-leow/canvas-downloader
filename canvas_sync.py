@@ -70,6 +70,12 @@ def enrollment_roles(course):
     return {"roles": sorted({e["type"] for e in enrollments if e["type"]}), "enrollments": enrollments}
 
 
+def has_own_submissions(course):
+    """TA/observer-only enrollments have no submissions of their own; unknown enrollments are tried."""
+    enrollments = course.get("enrollments")
+    return not enrollments or any(entry.get("type") == "student" for entry in enrollments)
+
+
 def course_catalog(root):
     root = Path(root)
     path = root / ".sync-catalog.json"
@@ -135,6 +141,7 @@ class Sync:
                        "updated": 0, "unchanged": 0, "skipped_locked": 0, "errors": [], 'unavailable_sources': []}
         self.failed = {}
         self.include_personal, self.include_groups = include_personal, include_groups
+        self.personal_here = include_personal
         self.downloads = None
         self._checkpoint = time.monotonic()
         self._pending_writes = 0
@@ -550,6 +557,9 @@ class Sync:
             self.status['skipped_locked'] += 1
             if key in self.state['items']:
                 self.state['items'][key]['available'] = False
+            # A lock date hides the description, not your own submission and feedback.
+            if self.personal_here:
+                self.attempt(course_id, f'submission:{identifier}', lambda: self.submission(course_id, folder, identifier))
             return
         title = item.get('name', 'Assignment')
         lines = [title, f'Source: {item.get("html_url", "")}', f'Due: {item.get("due_at") or "Not specified"}']
@@ -564,7 +574,7 @@ class Sync:
                 lines.append(f'  {rating.get("points", "")}: {rating.get("description", "")} {rating.get("long_description") or ""}')
         self.rich(course_id, folder, key, f'{folder}/Canvas Sync/Assignments/{identifier}-{name(title)}.txt',
                   '\n'.join(lines), item.get('description'))
-        if self.include_personal:
+        if self.personal_here:
             self.attempt(course_id, f'submission:{identifier}', lambda: self.submission(course_id, folder, identifier))
 
     def submission(self, course_id, folder, assignment_id):
@@ -572,7 +582,7 @@ class Sync:
                         params={'include[]': ['submission_comments', 'submission_history', 'rubric_assessment']}).json()
         lines, bodies = [f'Your submission: assignment {assignment_id}'], []
         attempts = [dict(entry, **data) if entry.get('attempt') == data.get('attempt') else entry
-                    for entry in data.get('submission_history') or [data]]
+                    for entry in data.get('submission_history') or [data] if isinstance(entry, dict)]
         if data.get('attempt') not in {a.get('attempt') for a in attempts}:
             attempts.append(data)
         for entry in attempts:
@@ -580,10 +590,10 @@ class Sync:
                 if field in entry:
                     lines.append(f'{field}: {json.dumps(entry[field], ensure_ascii=False)}')
             bodies.append(entry.get('body') or '')
-            for attachment in entry.get('attachments') or []:
+            for attachment in [a for a in entry.get('attachments') or [] if isinstance(a, dict)]:
                 self.attempt(course_id, f'submission-attachment:{assignment_id}:{attachment.get("id")}',
                     lambda attachment=attachment: self.attachment(course_id, folder, attachment))
-            for comment in entry.get('submission_comments') or []:
+            for comment in [c for c in entry.get('submission_comments') or [] if isinstance(c, dict)]:
                 lines.append(f'{comment.get("created_at", "")} — {comment.get("author_name", "Unknown")}: {comment.get("comment", "")}')
                 for attachment in comment.get('attachments') or []:
                     self.attempt(course_id, f'feedback-attachment:{assignment_id}:{attachment.get("id")}',
@@ -651,6 +661,7 @@ class Sync:
         if self.downloads is None or self.downloads.root != self.safe_path(folder).resolve():
             self.downloads = DownloadIndex(self.safe_path(folder))
         self.session._canvas_archive = self.downloads
+        self.personal_here = self.include_personal and has_own_submissions(course)
         self.status['courses'].append({'id': course_id, 'name': course['name']})
         self.status['current_course'] = {'id': course_id, 'name': course['name']}
         self.save()

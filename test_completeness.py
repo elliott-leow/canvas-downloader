@@ -53,6 +53,8 @@ class Canvas(requests.Session):
         self.assignment = {'id': 40, 'name': 'Essay', 'description': '<p>Write an essay.</p>', 'points_possible': 20,
                            'submission_types': ['online_upload'], 'due_at': '2026-11-01',
                            'rubric': [{'description': 'Evidence', 'points': 20, 'ratings': [{'points': 20, 'description': 'Complete'}]}]}
+        self.submission = {'attempt': 1, 'grade': 'A', 'score': 20, 'body': '<p>My essay.</p>',
+                           'attachments': [self.files['5']], 'submission_comments': [{'author_name': 'Teacher', 'comment': 'Good reasoning'}]}
 
     def get(self, url, **kwargs):
         self.calls[url] += 1
@@ -83,8 +85,7 @@ class Canvas(requests.Session):
         if path == '/api/v1/courses/1/assignments':
             return response([self.assignment], url)
         if path == '/api/v1/courses/1/assignments/40/submissions/self':
-            return response({'attempt': 1, 'grade': 'A', 'score': 20, 'body': '<p>My essay.</p>',
-                             'attachments': [self.files['5']], 'submission_comments': [{'author_name': 'Teacher', 'comment': 'Good reasoning'}]}, url)
+            return response(self.submission, url)
         if path == '/api/v1/courses/1/quizzes':
             return response([{'id': 7, 'title': 'Quiz', 'description': 'Available instructions', 'time_limit': 15}], url)
         if path == '/api/v1/calendar_events':
@@ -150,6 +151,30 @@ class CompletenessTests(unittest.TestCase):
         self.assertIn('Good reasoning', next(self.root.rglob('Your submissions/40.txt')).read_text())
         self.assertTrue(list(self.root.rglob('*Group page.txt')))
         self.assertEqual(self.canvas.calls[BASE + '/files/4/download'], 1)
+
+    def test_personal_material_skips_courses_without_a_student_enrollment(self):
+        self.canvas.course['enrollments'] = [{'type': 'ta', 'role': 'TaEnrollment', 'enrollment_state': 'active'}]
+        result = self.archive(personal=True)
+        self.assertFalse(result.partial, result.content_errors)
+        self.assertFalse(any('/submissions/self' in url for url in self.canvas.calls))
+        self.canvas.course['enrollments'].append({'type': 'student', 'role': 'StudentEnrollment', 'enrollment_state': 'active'})
+        self.archive(personal=True)
+        self.assertTrue(any('/submissions/self' in url for url in self.canvas.calls))
+
+    def test_locked_assignment_still_keeps_your_submission(self):
+        self.canvas.assignment['locked_for_user'] = True
+        result = self.archive(personal=True)
+        self.assertFalse(result.partial, result.content_errors)
+        self.assertFalse(list(self.root.rglob('*Essay.txt')))
+        self.assertIn('Good reasoning', next(self.root.rglob('Your submissions/40.txt')).read_text())
+
+    def test_empty_submission_history_entries_are_ignored(self):
+        self.canvas.submission['submission_history'] = [None, {'attempt': 1, 'attachments': [None, self.canvas.files['5']]}]
+        self.canvas.submission['submission_comments'].insert(0, None)
+        result = self.archive(personal=True)
+        self.assertFalse(result.partial, result.content_errors)
+        self.assertIn('Good reasoning', next(self.root.rglob('Your submissions/40.txt')).read_text())
+        self.assertTrue(list(self.root.rglob('feedback.txt')))
 
     def test_retry_requests_failed_category_only_and_keeps_successes(self):
         failed = BASE + '/api/v1/courses/1/pages'
